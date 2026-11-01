@@ -166,13 +166,21 @@ class Q {
 
 export function createClient() {
   const session = { user: { id: ME, email: 'pi@lab.org' } };
+  let listener = null;
+  // Simulate a signed-out visitor returning from an expired email link.
+  const signedOut = /error_code=/.test(location.hash);
   return {
     from: (t) => new Q(t),
     auth: {
-      onAuthStateChange(cb) { setTimeout(() => cb('INITIAL_SESSION', session), 0); return { data: { subscription: { unsubscribe() {} } } }; },
+      onAuthStateChange(cb) { listener = cb; setTimeout(() => cb('INITIAL_SESSION', signedOut ? null : session), 0); return { data: { subscription: { unsubscribe() {} } } }; },
       signOut: async () => ({ error: null }),
       signInWithOAuth: async () => ({ error: null }),
       signInWithOtp: async () => ({ error: null }),
+      verifyOtp: async ({ token }) => {
+        if (token !== '123456') return { data: null, error: { message: 'Token has expired or is invalid' } };
+        setTimeout(() => listener?.('SIGNED_IN', session), 0);
+        return { data: { session }, error: null };
+      },
     },
   };
 }

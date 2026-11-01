@@ -53,6 +53,21 @@ const go = async (hash) => { await page.goto(BASE + hash); await page.waitForFun
 const toastText = () => page.locator('#toasts').innerText();
 
 try {
+  // signed-out visitor returning from an expired magic link
+  await page.goto(BASE + '#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired');
+  await page.waitForSelector('text=already been used or expired');
+  await page.fill('#magic [name=email]', 'pi@lab.org');
+  await page.click('#magic button');
+  await page.waitForSelector('#otp:not([hidden])');
+  await page.fill('#otp [name=token]', '000000');
+  await page.click('#otp button.primary');
+  await page.waitForSelector('.toast.error');
+  await page.fill('#otp [name=token]', '123456');
+  await page.click('#otp button.primary');
+  await page.waitForSelector('text=Welcome');
+  errors.length = 0;   // the wrong-code toast is an expected error
+  ok('expired link explained; 6-digit code sign-in works');
+
   await go('#/');
   await page.waitForSelector('text=Welcome');
   ok('home renders, admin logged in');

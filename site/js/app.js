@@ -54,22 +54,43 @@ async function route() {
   app.innerHTML = '<div class="card"><h3>Not found</h3><a href="#/">Go home</a></div>';
 }
 
+// Errors Supabase appends to the redirect URL (e.g. expired email link).
+function authReturnError() {
+  const p = new URLSearchParams(window.__AUTH_RETURN || '');
+  const code = p.get('error_code') || p.get('error');
+  if (!code) return '';
+  window.__AUTH_RETURN = '';
+  history.replaceState(null, '', location.pathname);
+  if (code === 'otp_expired')
+    return 'That sign-in link had already been used or expired. Institutional mail scanners often open links before you do — ' +
+      'request a new email and type the 6-digit code instead of clicking the link.';
+  return `Sign-in failed: ${(p.get('error_description') || code).replace(/\+/g, ' ')}`;
+}
+
 function loginScreen(msg = '') {
   document.getElementById('topbar').hidden = true;
   const redirect = location.origin + location.pathname;
+  msg = msg || authReturnError();
   app.className = 'view-login';
   app.innerHTML = `
     <div class="login card">
       <h1>📚 ${esc(labName)}</h1>
       <p class="muted">Papers, project ideas and how they connect. Members only.</p>
-      ${msg ? `<p class="notice">${esc(msg)}</p>` : ''}
+      ${msg ? `<p class="notice error">${esc(msg)}</p>` : ''}
       ${providers.includes('github') ? '<button class="primary wide" data-p="github">Sign in with GitHub</button>' : ''}
       ${providers.includes('google') ? '<button class="primary wide" data-p="google">Sign in with Google</button>' : ''}
       ${providers.includes('email') ? `
-        <div class="sep"><span>or email link</span></div>
+        <div class="sep"><span>or by email</span></div>
         <form id="magic">
           <input type="email" name="email" required placeholder="you@institute.ac.uk" autocomplete="email">
-          <button class="wide">Email me a sign-in link</button>
+          <button class="wide">Email me a sign-in code</button>
+        </form>
+        <form id="otp" hidden>
+          <p class="small">Enter the code from the email sent to <b id="otp-email"></b>
+            (or click the link in it, if your mail system leaves links intact).</p>
+          <input name="token" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" required placeholder="123456">
+          <button class="primary wide">Verify code</button>
+          <button type="button" class="ghost small" id="otp-back">Use a different email</button>
         </form>` : ''}
     </div>`;
   app.querySelectorAll('[data-p]').forEach((b) => (b.onclick = async () => {
@@ -77,13 +98,32 @@ function loginScreen(msg = '') {
     if (error) fail(error, 'Sign-in');
   }));
   const f = app.querySelector('#magic');
-  if (f) f.onsubmit = async (e) => {
+  const o = app.querySelector('#otp');
+  if (!f) return;
+  let email = '';
+  f.onsubmit = async (e) => {
     e.preventDefault();
-    const email = f.email.value.trim();
+    email = f.email.value.trim().toLowerCase();
+    const btn = f.querySelector('button');
+    btn.disabled = true;
     const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: redirect } });
-    if (error) return fail(error, 'Email link');
-    f.innerHTML = `<p class="notice">Check <b>${esc(email)}</b> for a sign-in link.</p>`;
+    btn.disabled = false;
+    if (error) return fail(error, 'Email sign-in');
+    f.hidden = true;
+    o.hidden = false;
+    o.querySelector('#otp-email').textContent = email;
+    o.token.focus();
   };
+  o.onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = o.querySelector('button.primary');
+    btn.disabled = true;
+    const { error } = await sb.auth.verifyOtp({ email, token: o.token.value.trim(), type: 'email' });
+    btn.disabled = false;
+    if (error) return fail(error, 'Code');
+    // onAuthStateChange(SIGNED_IN) takes over from here
+  };
+  o.querySelector('#otp-back').onclick = () => { o.hidden = true; f.hidden = false; };
 }
 
 function pendingScreen() {
