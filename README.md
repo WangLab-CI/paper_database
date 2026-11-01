@@ -16,6 +16,7 @@ A members-only web portal where the lab keeps its **paper library**, develops **
 | **Paper links** | One click (**Import → Link papers automatically**) builds links among library papers. **Cites:** from OpenAlex reference lists. **Shared references:** bibliographic coupling, at least *k* references in common, score = shared/√(nA·nB). **Similar wording:** TF-IDF cosine of title + abstract; lexical only. Each paper page lists its related papers, and members can add their own links with a note. Automatic links are rebuilt on each run; links added by hand are kept. |
 | **Insights** | Four focused views built from OpenAlex metadata. **Topic trends:** heatmap of primary topic/subfield/field (or lab tag) × year, as counts or share of each year; click a topic to compare the library's trend with the whole literature (both indexed to their own mean = 100). **Countries & institutes:** heatmap with whole counting by affiliation. **Collaborative groups:** co-authorship network with Louvain communities and group summaries; papers with >30 authors are excluded from the links. **Missing works:** works cited by ≥2 library papers, recent works citing ≥2 library papers, and OpenAlex related works, each with one-click Add. |
 | **Paper suggestions for projects** | Each project's Papers tab ranks library papers by word overlap between the project's text and each paper's title and abstract (TF-IDF), project tags found in the paper's tags, OpenAlex topics, keywords or MeSH terms, and citation or shared-reference links to papers already linked to the project. The reasons are shown for each suggestion; one-click Link or Dismiss. New projects open on this tab. |
+| **Technologies** (Tech tab) | Commercial platforms, kits and software, added by name or product-page link, with vendor, category, aliases, linked projects and notes. **Literature:** Europe PMC full-text search for the product name, with recent papers, most-cited papers and a papers-per-year chart; Check now, plus the daily job. **Technical updates:** the daily job watches the product page and shows the passages that appeared, and reads the vendor's news/RSS feed, auto-detected where possible. Lab members can add notes. |
 | **Graph** | An interactive network of papers, projects, concepts (tags) and people. Filter by node type, hide rarely used concepts, double-click a node to show only its neighbourhood (1–4 hops), and click through to a paper or project. |
 | **Admin** | Manage the allowlist, approve people who are waiting, and set roles (member/admin). |
 
@@ -93,3 +94,18 @@ tests/                parser unit tests, SQL/RLS tests, browser smoke test
 - Browser smoke test: `LIBS_DIR=… node tests/e2e/smoke.mjs` drives every page against an in-memory mock of Supabase. See the header of `tests/e2e/smoke.mjs`.
 
 Schema changes: edit `supabase/schema.sql` so it stays idempotent (re-runnable), then re-run it in the SQL Editor.
+
+## Technology tracking (daily job)
+
+The workflow `.github/workflows/track-products.yml` runs daily at 05:17 UTC; you can also start it from the Actions tab with **Run workflow**. It checks each technology for:
+- new Europe PMC papers,
+- changes on its product page,
+- new items in the vendor's news feed.
+
+It writes to Supabase with the project's **secret** key. That key bypasses Row Level Security, so it is stored only as an encrypted GitHub secret and never in the website:
+
+1. Supabase → **Project Settings → API Keys** → copy a **Secret key** (`sb_secret_…`) or the legacy `service_role` key.
+2. GitHub → this repository → **Settings → Secrets and variables → Actions → Secrets → New repository secret**. Name: `SUPABASE_SERVICE_KEY`; value: the key.
+3. Actions tab → **Track technologies** → **Run workflow** to test it. The log lists each product and what was found.
+
+Without the secret, the job skips itself with a warning. Literature tracking still works from the portal's **Check now** button. Some vendor sites block automated requests; the product page then shows the error, and literature tracking is unaffected.

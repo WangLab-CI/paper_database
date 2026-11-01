@@ -5,6 +5,7 @@ import { paperPicker } from './papers.js';
 import { diffWords } from '../diff.js';
 import { fetchAll } from '../db.js';
 import { suggestPapers } from '../suggest.js';
+import { techForProject } from './products.js';
 
 // ================================================================== board
 export async function projectsView(root, { params }) {
@@ -85,11 +86,12 @@ async function newProjectModal() {
 // ================================================================= detail
 export async function projectView(root, { id, params }) {
   const tab = params.tab || 'overview';
-  const [p, links, updates, versions] = await Promise.all([
+  const [p, links, updates, versions, tech] = await Promise.all([
     sb.from('projects').select('*').eq('id', id).maybeSingle().then(check),
     sb.from('project_papers').select('relation,note,created_at,added_by,paper:papers(id,title,authors,year,journal,tags)').eq('project_id', id).order('created_at').then(check),
     sb.from('project_updates').select('*').eq('project_id', id).order('created_at', { ascending: false }).then(check),
     sb.from('project_versions').select('id,version,change_note,edited_by,created_at').eq('project_id', id).order('version', { ascending: false }).then(check),
+    techForProject(id).catch(() => []),
   ]);
   if (!p) { root.innerHTML = '<div class="card">Project not found. <a href="#/projects">Back</a></div>'; return; }
   const reload = (t = tab) => { const h = `#/project/${id}?tab=${t}`; if (location.hash === h) projectView(root, { id, params: { tab: t } }); else location.hash = h; };
@@ -107,6 +109,7 @@ export async function projectView(root, { id, params }) {
         ${p.collaborators?.length ? ` · with ${p.collaborators.map((c) => esc(personName(c))).join(', ')}` : ''}
         · created ${fmtDate(p.created_at)} · last edit ${fmtDateTime(p.updated_at)} by ${esc(personName(p.last_edited_by))}</div>
       <div class="tagline">${tagChips(p.tags, '#/graph?focus=tag:')}</div>
+      ${tech.length ? `<p class="small">Technologies: ${tech.map((t) => `<a href="#/tech/${t.id}">${esc(t.name)}</a>`).join(', ')}</p>` : ''}
       <nav class="tabs">${tabs.map(([k, l]) => `<a href="#/project/${id}?tab=${k}" class="${k === tab ? 'active' : ''}">${l}</a>`).join('')}
         <a href="#/graph?focus=project:${id}">Graph ↗</a></nav>
     </div>

@@ -284,3 +284,19 @@ ul.sugg select.rel-pick { width: auto; padding: 3px 6px; }
 .import-report { margin-top: 10px; }
 .row > input[type=checkbox], .row > input[type=radio] { flex: none; width: auto; margin: 0 6px 0 0; }
 label.row { justify-content: flex-start; gap: 0; }
+
+/* technologies */
+.tech-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tech-card { display: block; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; color: var(--fg); }
+.tech-card:hover { border-color: var(--accent); text-decoration: none; }
+.tech-card .meta { margin-top: 3px; }
+.kind { display: inline-block; font-size: .7em; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; padding: 1px 6px;
+  border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
+.kind.k-page_change, .kind.k-news { color: var(--accent); border-color: var(--accent); }
+ul.events li { padding: 10px 0; }
+svg.barchart .bar { fill: var(--cat-1); }
+svg.barchart .bar-hit { fill: transparent; }
+svg.barchart .bar-hit:hover + text, svg.barchart .bar-hit:hover { fill: rgba(127,127,127,.08); }
+svg.barchart .grid { stroke: var(--grid); }
+svg.barchart text { fill: var(--muted); font-size: 11px; }
+p select, .card p select { width: auto; display: inline-block; padding: 1px 4px; }

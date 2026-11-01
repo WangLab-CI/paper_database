@@ -12,7 +12,7 @@ const DB = window.__MOCK_DB__ = {
     { id: '00000000-0000-0000-0000-00000000000c', email: 'new@x.org', full_name: 'Newcomer', role: 'pending', created_at: now() },
   ],
   allowlist: [{ email: 'pi@lab.org', role: 'admin', created_at: now() }, { email: 'stu@lab.org', role: 'member', created_at: now() }],
-  papers: [], paper_notes: [], paper_links: [], projects: [], project_versions: [], project_papers: [], project_updates: [],
+  papers: [], paper_notes: [], paper_links: [], products: [], product_projects: [], product_events: [], projects: [], project_versions: [], project_papers: [], project_updates: [],
 };
 const P1 = uuid(), P2 = uuid(), PR1 = uuid();
 DB.papers.push(
@@ -31,9 +31,12 @@ const DEFAULTS = {
   project_papers: () => ({ relation: 'background', added_by: ME, created_at: now() }),
   project_updates: () => ({ id: uuid(), author_id: ME, created_at: now() }),
   allowlist: () => ({ role: 'member', created_at: now() }),
+  products: () => ({ id: uuid(), aliases: [], tags: [], notes: '', created_by: ME, created_at: now(), updated_at: now() }),
+  product_projects: () => ({ created_at: now() }),
+  product_events: () => ({ id: uuid(), payload: {}, created_by: ME, created_at: now() }),
   paper_links: () => ({ created_by: ME, created_at: now(), score: null, shared: null, note: null }),
 };
-const UNIQUE = { papers: [['id'], ['doi'], ['pmid'], ['arxiv_id']], paper_links: [['source_id', 'target_id', 'kind']], paper_notes: [['paper_id', 'user_id']], project_papers: [['project_id', 'paper_id']], allowlist: [['email']] };
+const UNIQUE = { papers: [['id'], ['doi'], ['pmid'], ['arxiv_id']], paper_links: [['source_id', 'target_id', 'kind']], product_events: [['product_id', 'external_id']], product_projects: [['product_id', 'project_id']], paper_notes: [['paper_id', 'user_id']], project_papers: [['project_id', 'paper_id']], allowlist: [['email']] };
 
 function snapshot(p, note) {
   const { last_change_note, version, created_at, updated_at, last_edited_by, ...snap } = p;

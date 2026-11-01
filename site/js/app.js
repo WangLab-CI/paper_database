@@ -8,6 +8,7 @@ import { graphView } from './views/graph.js';
 import { importView } from './views/import.js';
 import { adminView, meView } from './views/admin.js';
 import { insightsView } from './views/insights.js';
+import { productsView, productView } from './views/products.js';
 
 const cfg = window.PORTAL_CONFIG || {};
 const labName = cfg.LAB_NAME && !cfg.LAB_NAME.startsWith('__') ? cfg.LAB_NAME : 'Lab Paper Portal';
@@ -26,6 +27,8 @@ const routes = [
   [/^\/project\/([\w-]+)$/, projectView, 'projects'],
   [/^\/graph$/, graphView, 'graph'],
   [/^\/insights$/, insightsView, 'insights'],
+  [/^\/tech$/, productsView, 'tech'],
+  [/^\/tech\/([\w-]+)$/, productView, 'tech'],
   [/^\/import$/, importView, 'import'],
   [/^\/admin$/, adminView, 'admin'],
   [/^\/me$/, meView, ''],

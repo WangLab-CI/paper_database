@@ -66,6 +66,22 @@ await page.route('https://api.openalex.org/**', (route) => {
   else body = { results: Object.entries(OAW).filter(([d]) => u.includes(d)).map(([, w]) => w) };
   route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body) });
 });
+// Fake Crossref (DOI lookup when adding a tracked paper to the library)
+await page.route('https://api.crossref.org/**', (route) => route.fulfill({ status: 200, contentType: 'application/json',
+  headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ message: { DOI: '10.1038/s41586-026-0001', title: ['A Visium HD atlas of colorectal cancer'],
+    author: [{ family: 'Oliveira', given: 'M' }], 'container-title': ['Nature'], issued: { 'date-parts': [[2026]] }, type: 'journal-article' } }) }));
+// Fake Europe PMC (technology tracking)
+await page.route('https://www.ebi.ac.uk/europepmc/**', (route) => {
+  const u = decodeURIComponent(route.request().url());
+  const body = u.includes('PUB_YEAR:')
+    ? { hitCount: 10 + (+u.match(/PUB_YEAR:(\d+)/)[1] - 2016) * 7, resultList: { result: [] } }
+    : { hitCount: 2, resultList: { result: [
+      { id: '41000001', source: 'MED', pmid: '41000001', doi: '10.1038/s41586-026-0001', title: 'A Visium HD atlas of colorectal cancer.', authorString: 'Oliveira M, Smith A.',
+        journalTitle: 'Nature', pubYear: '2026', firstPublicationDate: '2026-10-20', citedByCount: 42 },
+      { id: 'PPR900', source: 'PPR', title: 'Benchmarking Visium HD against Xenium', authorString: 'Roe J.', pubYear: '2026', firstPublicationDate: '2026-10-28', citedByCount: 0 },
+    ] } };
+  route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body) });
+});
 await page.route('https://cdn.jsdelivr.net/npm/**', (route) => {
   const key = route.request().url().split('/npm/')[1];
   const file = CDN[key];
@@ -259,6 +275,52 @@ try {
   await page.click('[data-approve="new@x.org"]');
   await page.waitForFunction(() => !document.body.innerText.includes('Waiting for access'));
   ok('admin approves pending user');
+
+  // ---- Technologies
+  await go('#/tech');
+  await page.click('#add');
+  await page.fill('.modal [name=name]', 'https://www.10xgenomics.com/products/visium-hd');
+  await page.press('.modal [name=name]', 'Tab');
+  if ((await page.inputValue('.modal [name=url]')) !== 'https://www.10xgenomics.com/products/visium-hd') throw new Error('url not taken from name');
+  if (!(await page.inputValue('.modal [name=vendor]')).startsWith('10xgenomics')) throw new Error('vendor not guessed');
+  await page.fill('.modal [name=name]', 'Visium HD');
+  await page.fill('.modal [name=vendor]', '10x Genomics');
+  await page.fill('.modal [name=category]', 'Spatial transcriptomics');
+  await page.fill('.modal [name=aliases]', 'Visium High Definition');
+  await page.selectOption('.modal [name=projects]', { label: 'Organoid TP53 screen (idea)' });
+  await page.click('.modal button.primary');
+  await page.waitForSelector('h1:has-text("Visium HD")');
+  await page.waitForSelector('#ev-papers li:has-text("A Visium HD atlas of colorectal cancer")');
+  await page.waitForSelector('#trend svg .bar');
+  await page.waitForSelector('#cited li:has-text("A Visium HD atlas")');
+  const q = await page.locator('code').first().innerText();
+  if (q !== '("Visium HD" OR "Visium High Definition")') throw new Error('query: ' + q);
+  ok('technology added from link: literature, yearly trend, most-cited');
+
+  // simulate the daily job's page-change event, then add a lab note
+  await page.evaluate(() => { const D = window.__MOCK_DB__; D.product_events.push({ id: 'pc1', product_id: D.products[0].id, kind: 'page_change',
+    title: 'Product page updated: 1 new passage', url: D.products[0].url, event_date: '2026-11-01', external_id: 'page:abc', created_by: null,
+    created_at: new Date().toISOString(), payload: { added: ['New: Visium HD 3\' assay now supports FFPE.'], added_count: 1, removed_count: 0 } }); });
+  await page.click('#note');
+  await page.fill('.modal [name=title]', 'Quote received: £2.1k per slide');
+  await page.click('.modal button.primary');
+  await page.waitForSelector('#ev-updates li:has-text("Quote received")');
+  await page.waitForSelector('#ev-updates li:has-text("Product page updated")');
+  await page.click('#ev-updates summary');
+  await page.waitForSelector('#ev-updates ins:has-text("supports FFPE")');
+  await page.click('#ev-papers li:has-text("colorectal") .ev-add');
+  await page.waitForSelector('#ev-papers li:has-text("colorectal") .ev-add:has-text("Added")', { timeout: 40000 });
+  ok('technical updates, lab note, add paper to library');
+  await shot('tech');
+
+  await go('#/projects');
+  await page.click('.pcard a.title >> text=Organoid TP53 screen');
+  await page.waitForSelector('.project-head a:has-text("Visium HD")');
+  await go('#/');
+  await page.waitForSelector('#tech-updates li:has-text("Quote received")');
+  await go('#/tech');
+  await page.waitForSelector('.tech-card:has-text("Visium HD")');
+  ok('technology shown on project, home and list pages');
 
   // ---- Insights
   await go('#/insights?tab=trends&level=topic');

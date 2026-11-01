@@ -1,5 +1,6 @@
 import { sb, state, check, personName } from '../db.js';
 import { esc, md, fmtDate, authorsShort, tagChips } from '../util.js';
+import { latestTechEvents } from './products.js';
 
 export async function homeView(root) {
   const uid = state.user.id;
@@ -56,8 +57,18 @@ export async function homeView(root) {
             <a href="#/paper/${n.paper.id}">${esc(n.paper.title)}</a>
             <div class="meta">${esc(authorsShort(n.paper.authors))} ${n.paper.year || ''}</div></li>`).join('')}</ul>`
           : '<p class="muted">Mark papers as “to read” on their page to build your list.</p>'}
+        <h2>Technology updates</h2>
+        <div id="tech-updates"><p class="muted small">Loading…</p></div>
       </section>
     </div>`;
+  latestTechEvents(6).then((evs) => {
+    const box = root.querySelector('#tech-updates');
+    if (!box) return;
+    box.innerHTML = evs.length ? `<ul class="list">${evs.map((e) => `<li><a href="#/tech/${e.product?.id}"><b>${esc(e.product?.name || '')}</b></a> ·
+      ${e.url ? `<a target="_blank" rel="noopener" href="${esc(e.url)}">${esc(e.title)}</a>` : esc(e.title)}
+      <div class="meta">${fmtDate(e.event_date || e.created_at)}</div></li>`).join('')}</ul><p class="small"><a href="#/tech">All technology updates →</a></p>`
+      : '<p class="muted small">Track platforms and kits under <a href="#/tech">Tech</a>.</p>';
+  }).catch(() => {});
 
   root.querySelector('#quick').onsubmit = (e) => {
     e.preventDefault();

@@ -47,6 +47,13 @@ do $$ begin
   insert into paper_links(source_id,target_id,kind,score)
     select a.id, b.id, 'cites', 1 from papers a, papers b where a.title='Paper A' and b.title='Paper B';
   assert (select count(*) from paper_links)=1, 'member can add paper link';
+  insert into products(name, aliases) values ('Visium HD', '{"Visium High Definition"}');
+  insert into product_events(product_id, kind, title, external_id) select id, 'paper', 'A paper', 'epmc:MED:1' from products;
+  begin insert into product_events(product_id, kind, title, external_id) select id, 'paper', 'Dup', 'epmc:MED:1' from products;
+    assert false, 'duplicate event blocked';
+  exception when unique_violation then null; end;
+  insert into product_projects(product_id, project_id) select pr.id, pj.id from products pr, projects pj;
+  assert (select count(*) from product_projects)=1, 'product linked to project';
   begin insert into paper_links(source_id,target_id,kind) select id,id,'manual' from papers limit 1;
     assert false, 'self link blocked';
   exception when check_violation then null; end;
@@ -70,6 +77,8 @@ end $$;
 -- ---- anon sees nothing
 reset role; set role anon;
 do $$ begin
+  begin perform 1 from products; assert false, 'anon products read should fail';
+  exception when insufficient_privilege then null; end;
   begin perform 1 from paper_links; assert false, 'anon links read should fail';
   exception when insufficient_privilege then null; end;
   begin perform 1 from papers; assert false, 'anon read should fail';

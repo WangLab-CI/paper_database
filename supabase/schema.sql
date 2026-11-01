@@ -273,6 +273,58 @@ language plpgsql as $$ begin new.updated_at := now(); return new; end $$;
 drop trigger if exists papers_touch on public.papers;
 create trigger papers_touch before update on public.papers
   for each row execute function public.touch_updated_at();
+-- ---------------------------------------------------------------------
+-- Commercial products / technologies and their update feed
+-- ---------------------------------------------------------------------
+create table if not exists public.products (
+  id              uuid primary key default gen_random_uuid(),
+  name            text not null,
+  vendor          text,
+  category        text,
+  url             text,                 -- product page (watched for changes by the daily job)
+  feed_url        text,                 -- vendor news / RSS / Atom feed (optional; auto-detected)
+  aliases         text[] not null default '{}',   -- other names used in papers
+  search_query    text,                 -- optional Europe PMC query overriding name + aliases
+  notes           text not null default '',
+  tags            text[] not null default '{}',
+  created_by      uuid references public.profiles(id) on delete set null default auth.uid(),
+  created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
+  last_checked_at timestamptz,          -- page/feed check (daily job)
+  last_lit_check  timestamptz,          -- literature check
+  page_title      text,
+  page_hash       text,
+  page_text       text,
+  check_error     text
+);
+
+create table if not exists public.product_projects (
+  product_id  uuid not null references public.products(id) on delete cascade,
+  project_id  uuid not null references public.projects(id) on delete cascade,
+  created_at  timestamptz not null default now(),
+  primary key (product_id, project_id)
+);
+
+create table if not exists public.product_events (
+  id           uuid primary key default gen_random_uuid(),
+  product_id   uuid not null references public.products(id) on delete cascade,
+  kind         text not null check (kind in ('paper','page_change','news','note')),
+  title        text not null,
+  url          text,
+  event_date   date,
+  external_id  text not null,          -- de-duplication key, e.g. epmc:MED:123, feed:<guid>, page:<hash>
+  payload      jsonb not null default '{}',
+  created_by   uuid references public.profiles(id) on delete set null default auth.uid(),
+  created_at   timestamptz not null default now(),
+  unique (product_id, external_id)
+);
+create index if not exists product_events_recent_idx on public.product_events (created_at desc);
+create index if not exists product_events_product_idx on public.product_events (product_id, event_date desc);
+
+drop trigger if exists products_touch on public.products;
+create trigger products_touch before update on public.products
+  for each row execute function public.touch_updated_at();
+
 drop trigger if exists notes_touch on public.paper_notes;
 create trigger notes_touch before update on public.paper_notes
   for each row execute function public.touch_updated_at();
@@ -299,6 +351,9 @@ alter table public.project_versions enable row level security;
 alter table public.project_papers   enable row level security;
 alter table public.project_updates  enable row level security;
 alter table public.paper_links      enable row level security;
+alter table public.products         enable row level security;
+alter table public.product_projects enable row level security;
+alter table public.product_events   enable row level security;
 
 -- Nothing is readable by anonymous visitors.
 revoke all on all tables in schema public from anon;
@@ -310,7 +365,8 @@ begin
   for p in select policyname, tablename from pg_policies
            where schemaname = 'public'
              and tablename in ('allowlist','profiles','papers','paper_notes','projects',
-                               'project_versions','project_papers','project_updates','paper_links') loop
+                               'project_versions','project_papers','project_updates','paper_links',
+                               'products','product_projects','product_events') loop
     execute format('drop policy %I on public.%I', p.policyname, p.tablename);
   end loop;
 end $$;
@@ -356,6 +412,18 @@ create policy pp_write  on public.project_papers for all to authenticated
 create policy plinks_read  on public.paper_links for select to authenticated using (public.is_member());
 create policy plinks_write on public.paper_links for all to authenticated
   using (public.is_member()) with check (public.is_member());
+
+create policy products_read   on public.products for select to authenticated using (public.is_member());
+create policy products_insert on public.products for insert to authenticated with check (public.is_member());
+create policy products_update on public.products for update to authenticated using (public.is_member()) with check (public.is_member());
+create policy products_delete on public.products for delete to authenticated
+  using (public.is_admin() or (public.is_member() and created_by = auth.uid()));
+create policy prodproj_all on public.product_projects for all to authenticated
+  using (public.is_member()) with check (public.is_member());
+create policy prodev_read   on public.product_events for select to authenticated using (public.is_member());
+create policy prodev_insert on public.product_events for insert to authenticated with check (public.is_member());
+create policy prodev_delete on public.product_events for delete to authenticated
+  using (public.is_admin() or (public.is_member() and created_by = auth.uid()));
 
 create policy updates_read   on public.project_updates for select to authenticated using (public.is_member());
 create policy updates_insert on public.project_updates for insert to authenticated
