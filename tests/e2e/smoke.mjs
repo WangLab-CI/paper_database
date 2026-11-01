@@ -167,7 +167,14 @@ try {
   await page.fill('.modal [name=tags]', 'pdac, spatial');
   await page.click('.modal button.primary');
   await page.waitForSelector('.project-head h1:text("Spatial PDAC niches")');
-  ok('create project');
+  await page.waitForSelector('#suggest li:has-text("Spatial atlas of PDAC")');
+  const why = await page.locator('#suggest li:has-text("Spatial atlas of PDAC") .reasons').innerText();
+  if (!/tags\/topics: pdac/.test(why)) throw new Error('suggestion reasons: ' + why);
+  ok('create project → suggestions with reasons');
+  await page.locator('#suggest').scrollIntoViewIfNeeded();
+  await shot('suggest');
+  await page.click('.tabs a:has-text("Overview")');
+  await page.waitForSelector('#edit');
 
   await page.click('#edit');
   await page.fill('.modal [name=hypothesis]', 'CAF subtypes define immune exclusion zones.');

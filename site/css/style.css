@@ -267,3 +267,9 @@ ol.cands li { display: grid; grid-template-columns: 72px 1fr auto; gap: 10px; al
 .cbar .track { flex: 0 0 44px; height: 10px; background: var(--seq-0); border-radius: 0 4px 4px 0; overflow: hidden; }
 .cbar .track span { display: block; height: 100%; background: var(--seq-4); border-radius: 0 4px 4px 0; }
 ol.cands .cbody a { font-weight: 600; color: var(--fg); }
+
+/* project suggestions */
+ul.sugg .reasons { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 3px; color: var(--muted); }
+ul.sugg .reasons span::before { content: "• "; }
+ul.sugg .score { font-variant-numeric: tabular-nums; font-size: .85em; color: var(--muted); min-width: 34px; text-align: right; }
+ul.sugg select.rel-pick { width: auto; padding: 3px 6px; }

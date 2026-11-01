@@ -3,6 +3,8 @@ import { esc, md, fmtDate, fmtDateTime, authorsShort, tagChips, toast, fail, STA
 import { modal, confirmDialog, tagInputHtml, readTags, formData } from '../ui.js';
 import { paperPicker } from './papers.js';
 import { diffWords } from '../diff.js';
+import { fetchAll } from '../db.js';
+import { suggestPapers } from '../suggest.js';
 
 // ================================================================== board
 export async function projectsView(root, { params }) {
@@ -75,7 +77,7 @@ async function newProjectModal() {
     try {
       const row = check(await sb.from('projects').insert({ title: d.title.trim(), summary: d.summary, hypothesis: d.hypothesis, tags: readTags(e.target) }).select('id').single());
       m.close();
-      location.hash = `#/project/${row.id}`;
+      location.hash = `#/project/${row.id}?tab=papers`;   // land on suggestions
     } catch (err) { fail(err, 'Create'); }
   };
 }
@@ -189,8 +191,10 @@ function papersTab(el, p, links, reload) {
               <button class="ghost small note-btn">✎ note</button>
               <button class="ghost small unlink">unlink</button>
             </div>
-          </li>`).join('')}</ul>`).join('') : '<p class="muted">No papers linked yet.</p>'}
-    </div>`;
+          </li>`).join('')}</ul>`).join('') : '<p class="muted">No papers linked yet. See the suggestions below.</p>'}
+    </div>
+    <section class="card" id="suggest"><div class="loading">Finding related papers in the library…</div></section>`;
+  renderSuggestions(el.querySelector('#suggest'), p, links, reload);
 
   el.querySelector('#add').onclick = () => paperPicker(async (paperId) => {
     const m = modal('How does this paper relate?', `<form>
@@ -288,4 +292,59 @@ async function historyTab(el, p, versions) {
   el.querySelector('#diff').innerHTML = rows.map(([label, x, y]) => `
     <section class="pfield ${x === y ? 'same' : 'changed'}"><h3>${esc(label)} ${x === y ? '<small class="muted">unchanged</small>' : ''}</h3>
       <div class="diff">${x === y ? esc(y) || '<span class="muted">—</span>' : diffWords(x, y)}</div></section>`).join('');
+}
+
+// ---------------------------------------------------------- suggestions
+const dismissKey = (pid) => `portal:dismissed:${pid}`;
+function loadDismissed(pid) { try { return new Set(JSON.parse(localStorage.getItem(dismissKey(pid)) || '[]')); } catch { return new Set(); } }
+function saveDismissed(pid, set) { try { localStorage.setItem(dismissKey(pid), JSON.stringify([...set])); } catch { /* private mode */ } }
+
+async function renderSuggestions(box, p, links, reload) {
+  try {
+    const linkedIds = new Set(links.map((l) => l.paper?.id).filter(Boolean));
+    const ids = [...linkedIds];
+    const [papers, out, inn] = await Promise.all([
+      fetchAll('papers', 'id,title,authors,year,journal,abstract,tags,topics:oa_meta->topics,keywords:oa_meta->keywords,mesh:oa_meta->mesh'),
+      ids.length ? sb.from('paper_links').select('source_id,target_id,kind').in('source_id', ids).then(check) : [],
+      ids.length ? sb.from('paper_links').select('source_id,target_id,kind').in('target_id', ids).then(check) : [],
+    ]);
+    const dismissed = loadDismissed(p.id);
+    const sugg = suggestPapers(p, papers, { linkedIds, paperLinks: [...out, ...inn], dismissed, top: 15 });
+    const hasText = PROJECT_FIELDS.some(([k]) => (p[k] || '').trim()) || p.tags?.length;
+    box.innerHTML = `
+      <div class="row between"><h2>Suggested papers from the library</h2>
+        ${dismissed.size ? `<button class="ghost small" id="undismiss">Show ${dismissed.size} dismissed</button>` : ''}</div>
+      <p class="muted small">Ranked by three signals, with the reasons listed for each paper: word overlap between this project's text and the paper's title and abstract;
+        the project's tags found in the paper's tags, OpenAlex topics, keywords or MeSH terms; and citation or shared-reference links to papers already linked here.
+        Suggestions improve as you add text, tags and linked papers. Text matching is lexical, so check each suggestion before linking it.</p>
+      ${!hasText ? '<p class="notice small">Add a summary, hypothesis or tags (Overview → Edit) to get text-based suggestions.</p>' : ''}
+      ${sugg.length ? `<ul class="list sugg">${sugg.map((x, i) => `
+        <li data-i="${i}">
+          <div class="row between wrap">
+            <div style="flex:1;min-width:260px"><a href="#/paper/${x.paper.id}">${esc(x.paper.title)}</a>
+              <div class="meta">${esc(authorsShort(x.paper.authors))} ${x.paper.year || ''} ${x.paper.journal ? '· <i>' + esc(x.paper.journal) + '</i>' : ''}</div>
+              <div class="small reasons">${x.reasons.map((r) => `<span>${esc(r)}</span>`).join('')}</div></div>
+            <div class="row">
+              <span class="score" title="text ${x.parts.text} · tag hits ${x.parts.tags} · network links ${x.parts.network}">${x.score.toFixed(2)}</span>
+              <select class="rel-pick">${RELATIONS.map((r) => `<option>${r}</option>`).join('')}</select>
+              <button class="small primary link">Link</button>
+              <button class="small ghost dismiss" title="Hide this suggestion (only for you, on this browser)">✕</button>
+            </div>
+          </div>
+        </li>`).join('')}</ul>` : '<p class="muted">No suggestions yet: no library paper matches this project’s text, tags or linked papers.</p>'}`;
+    box.querySelector('#undismiss')?.addEventListener('click', () => { saveDismissed(p.id, new Set()); renderSuggestions(box, p, links, reload); });
+    box.querySelectorAll('li[data-i]').forEach((li) => {
+      const x = sugg[+li.dataset.i];
+      li.querySelector('.link').onclick = async (e) => {
+        e.target.disabled = true;
+        try {
+          check(await sb.from('project_papers').insert({ project_id: p.id, paper_id: x.paper.id, relation: li.querySelector('.rel-pick').value,
+            note: `Suggested (${x.reasons[0] || 'score ' + x.score})`.slice(0, 300) }));
+          toast('Linked', 'ok');
+          reload('papers');
+        } catch (err) { fail(err, 'Link'); e.target.disabled = false; }
+      };
+      li.querySelector('.dismiss').onclick = () => { dismissed.add(x.paper.id); saveDismissed(p.id, dismissed); li.remove(); };
+    });
+  } catch (err) { box.innerHTML = `<p class="error">Suggestions failed: ${esc(err.message || err)}</p>`; }
 }

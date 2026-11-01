@@ -62,6 +62,8 @@ function project(row, srcTable, cols) {
   const out = {};
   for (const c of splitTop(cols)) {
     const m = c.match(/^(?:(\w+):)?(\w+)(!inner)?\((.*)\)$/s);
+    const jp = c.match(/^(\w+):(\w+)->(\w+)$/);      // alias:jsoncol->key
+    if (jp) { out[jp[1]] = row[jp[2]]?.[jp[3]] ?? null; continue; }
     if (!m) { if (c === '*') Object.assign(out, row); else out[c] = row[c]; continue; }
     const [, alias, tgt, , sub] = m;
     const fk = `${singular(tgt)}_id`;
