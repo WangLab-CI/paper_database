@@ -1,0 +1,11 @@
+{
+  "name": "lab-paper-portal",
+  "private": true,
+  "type": "module",
+  "description": "Lab paper & project-idea portal (static site + Supabase)",
+  "scripts": {
+    "test": "node --test tests/parsers.test.mjs",
+    "test:e2e": "node tests/e2e/smoke.mjs",
+    "serve": "python3 -m http.server 8000 -d site"
+  }
+}

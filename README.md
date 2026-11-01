@@ -1,0 +1,92 @@
+# Lab Paper Portal
+
+A members-only web portal where the lab keeps its **paper library**, develops **project ideas** over time, and sees how the two connect in a **knowledge graph**.
+
+- **Hosting:** a static site on GitHub Pages (this repository, no build step).
+- **Logins and data:** [Supabase](https://supabase.com), free tier. It provides the Postgres database and sign-in (GitHub or an emailed link).
+- **Access:** only emails on the lab's allowlist can read or write anything. This is enforced inside the database by Postgres Row Level Security, not by the web page.
+
+## Features
+
+| Area | What it does |
+|---|---|
+| **Papers** | Add by DOI, PMID, PMCID or arXiv ID, with metadata fetched from Crossref, Europe PMC and DataCite. Search Europe PMC (PubMed, PMC, bioRxiv/medRxiv) from inside the portal. Full-text search of the library, plus tags. Each member keeps their own note, 1–5 rating and reading status (to read / reading / read) per paper, visible to the whole lab. BibTeX export of any filtered list. |
+| **Import** | Bulk import of Zotero, Mendeley or EndNote exports (BibTeX or RIS). Duplicates are skipped by DOI, PMID, arXiv ID or title. Keywords become tags. An option fetches missing abstracts. |
+| **Projects** | A Kanban board by status (idea → exploring → pilot → active → paused → completed → archived). Each project has structured fields: summary, hypothesis, rationale, aims, open questions, next steps. **Every edit is saved as a version, with a "what changed and why" note, and any two versions can be compared word by word.** There is a dated timeline of updates (results, decisions). Papers link to projects with a typed relation: background / supports / contradicts / method / dataset / inspiration. If two people edit the same project at once, the second save is refused rather than overwriting the first. |
+| **Graph** | An interactive network of papers, projects, concepts (tags) and people. Filter by node type, hide rarely used concepts, double-click a node to show only its neighbourhood (1–4 hops), and click through to a paper or project. |
+| **Admin** | Manage the allowlist, approve people who are waiting, and set roles (member/admin). |
+
+## One-time setup (about 20 minutes)
+
+### 1. Create the Supabase project
+1. Sign up at https://supabase.com and create a project. Pick the **EU (London or Frankfurt)** region for UK/EU data residency.
+2. Open **SQL Editor**, paste the whole of [`supabase/schema.sql`](supabase/schema.sql) and run it.
+3. Make yourself the first admin by running this in the SQL Editor:
+   ```sql
+   insert into public.allowlist (email, role) values ('your.email@institute.ac.uk', 'admin')
+     on conflict (email) do update set role = 'admin';
+   ```
+4. Go to **Project Settings → API** and copy the **Project URL** and the **anon / publishable key**. Never use the `service_role` key in the site.
+
+### 2. Configure sign-in (Supabase → Authentication)
+- **URL Configuration:** set **Site URL** to `https://wanglab-ci.github.io/paper_database/` and add the same URL under **Redirect URLs**.
+- **GitHub sign-in (recommended):** at GitHub → Settings → Developer settings → OAuth Apps → New, set the callback URL to `https://<project-ref>.supabase.co/auth/v1/callback`. Paste the app's Client ID and Secret into Supabase under **Providers → GitHub**. Members are matched by their GitHub **primary email**.
+- **Email link:** this is enabled by default, but Supabase's built-in mail server only sends a handful of emails per hour and only to your own team. For real use, set up **custom SMTP** under **Authentication → Emails → SMTP settings**, using your institute's mail server or a service such as Resend, Postmark or SendGrid.
+- **Optional:** to stop strangers creating accounts at all, turn off "Allow new users to sign up" and invite people from **Authentication → Users → Invite**. The allowlist already blocks any data access for unlisted users.
+
+### 3. Configure GitHub Pages
+1. In this repo, go to **Settings → Pages → Source** and choose **GitHub Actions**.
+2. Go to **Settings → Secrets and variables → Actions → Variables** and add these repository variables:
+   | Variable | Example |
+   |---|---|
+   | `SUPABASE_URL` | `https://abcd1234.supabase.co` |
+   | `SUPABASE_ANON_KEY` | `eyJhbGciOi…` or `sb_publishable_…` |
+   | `LAB_NAME` | `Wang Lab` |
+   | `AUTH_PROVIDERS` | `github,email` (any of `github`, `google`, `email`) |
+3. Push to `main`, or run the workflow from the Actions tab. The site goes live at `https://wanglab-ci.github.io/paper_database/`.
+
+> The anon key is public by design; every request is checked by the RLS policies in `schema.sql`. Keep the repository free of real data. All lab content lives only in Supabase.
+
+### 4. Add members
+Sign in, open **Admin**, and add each member's email. People who sign in before being added appear under "Waiting for access" and can be approved with one click.
+
+## Importing your Zotero library
+In Zotero, right-click a collection → **Export Collection…** → format **BibTeX** (or RIS) → save. Then in the portal open **Import → Bulk import**, choose the file, optionally add a tag such as `zotero`, and click Import. Re-importing the same file is safe because duplicates are skipped.
+
+## Who can do what
+
+| | member | admin |
+|---|---|---|
+| Read everything | ✓ | ✓ |
+| Add/edit papers, tags, projects, links | ✓ | ✓ |
+| Edit own notes, ratings and timeline posts | ✓ | ✓ |
+| Delete papers or projects | ones they created / lead | all |
+| Manage allowlist and roles | | ✓ |
+
+Project edits are never lost. All versions are kept in `project_versions`, and the database rejects any direct writes to that table.
+
+## Backups
+Supabase's free tier keeps daily backups for a limited period. For a lab archive, use **Database → Backups** or run `pg_dump` with the connection string from Project Settings → Database. The portal's **Export BibTeX** button exports the library.
+
+## Development
+
+```
+site/                 static web app (no build step)
+  index.html
+  css/style.css
+  js/app.js           auth gate + router
+  js/db.js            Supabase client & helpers
+  js/metadata.js      DOI / PMID / arXiv lookup
+  js/bibtex.js        BibTeX/RIS parsing, BibTeX export
+  js/diff.js          word-level diff for project history
+  js/views/*.js       home, papers, projects, graph, import, admin
+supabase/schema.sql   tables, triggers, RLS (idempotent)
+tests/                parser unit tests, SQL/RLS tests, browser smoke test
+```
+
+- Run locally: put your Supabase URL and key in `site/js/config.js` (don't commit them), run `npm run serve`, and add `http://localhost:8000` to Supabase's Redirect URLs.
+- `npm test` runs the parser unit tests.
+- SQL/RLS tests: against any Postgres 15+, run `psql -f tests/mock_supabase_auth.sql -f supabase/schema.sql -f tests/test_rls.sql`. CI runs this on every push.
+- Browser smoke test: `LIBS_DIR=… node tests/e2e/smoke.mjs` drives every page against an in-memory mock of Supabase. See the header of `tests/e2e/smoke.mjs`.
+
+Schema changes: edit `supabase/schema.sql` so it stays idempotent (re-runnable), then re-run it in the SQL Editor.

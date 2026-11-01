@@ -1,0 +1,76 @@
+name: Test & deploy portal
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Parser unit tests
+        run: npm test
+      - name: Schema + row-level-security tests
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -q \
+            -f tests/mock_supabase_auth.sql -f supabase/schema.sql -f supabase/schema.sql -f tests/test_rls.sql
+
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inject Supabase settings from repository variables
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          LAB_NAME: ${{ vars.LAB_NAME }}
+          AUTH_PROVIDERS: ${{ vars.AUTH_PROVIDERS }}
+        run: |
+          python3 - <<'EOF'
+          import os, json, pathlib
+          p = pathlib.Path('site/js/config.js')
+          s = p.read_text()
+          for k in ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'LAB_NAME', 'AUTH_PROVIDERS']:
+              v = os.environ.get(k, '').strip()
+              if v:
+                  s = s.replace(f'"__{k}__"', json.dumps(v))
+          p.write_text(s)
+          if '__SUPABASE_URL__' in s:
+              print('::warning::SUPABASE_URL variable not set - the site will show "not configured"')
+          EOF
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4
