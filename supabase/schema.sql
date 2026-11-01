@@ -280,8 +280,11 @@ revoke all on all tables in schema public from anon;
 do $$
 declare p record;
 begin
-  -- drop existing policies so this file can be re-run
-  for p in select policyname, tablename from pg_policies where schemaname = 'public' loop
+  -- drop this portal's existing policies so this file can be re-run (other tables untouched)
+  for p in select policyname, tablename from pg_policies
+           where schemaname = 'public'
+             and tablename in ('allowlist','profiles','papers','paper_notes','projects',
+                               'project_versions','project_papers','project_updates') loop
     execute format('drop policy %I on public.%I', p.policyname, p.tablename);
   end loop;
 end $$;
