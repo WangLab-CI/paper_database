@@ -1,9 +1,10 @@
 import { sb, state, check, fetchAll, findExisting, cleanPaper, allTags } from '../db.js';
-import { esc, toast, fail, authorsShort, parseTags, normalizeDoi } from '../util.js';
+import { esc, toast, fail, authorsShort, parseTags, normalizeDoi, RELATIONS } from '../util.js';
 import { lookup, searchLiterature, parseIdentifier } from '../metadata.js';
 import { parseReferences } from '../bibtex.js';
 import { paperFormHtml, readPaperForm } from './papers.js';
 import { modal } from '../ui.js';
+import { planImport, mergePatch, FILLABLE } from '../importplan.js';
 import { renderLinkBuilder } from './linkbuilder.js';
 
 export async function importView(root, { params }) {
@@ -32,12 +33,10 @@ export async function importView(root, { params }) {
     </div>
     <section class="card">
       <h2>Bulk import from Zotero / Mendeley / EndNote</h2>
-      <p class="muted">Export your library as <b>BibTeX (.bib)</b> or <b>RIS (.ris)</b>. In Zotero: right-click a collection → Export Collection… → BibTeX (tick “Export Notes” off).
-      Duplicates (same DOI, PMID, arXiv ID or title) are skipped. Keywords become tags.</p>
-      <div class="row wrap">
-        <input type="file" id="file" accept=".bib,.bibtex,.ris,.txt">
-        <label>Add tags to all imported <input id="bulk-tags" placeholder="e.g. zotero, review-2026"></label>
-      </div>
+      <p class="muted">Export a collection as <b>BibTeX (.bib)</b> or <b>RIS (.ris)</b>. In Zotero: right-click a collection → Export Collection… → BibTeX.
+      New papers are added; papers already in the library (same DOI, PMID, arXiv ID or title) are <b>matched, not duplicated</b>,
+      so the tags and project links below apply to them too. File keywords become tags on new papers.</p>
+      <input type="file" id="file" accept=".bib,.bibtex,.ris,.txt">
       <div id="bulk-out"></div>
     </section>
     <section class="card" id="link-builder"></section>`;
@@ -95,71 +94,143 @@ export async function importView(root, { params }) {
     try {
       const text = await file.text();
       const recs = parseReferences(text, file.name).map(cleanPaper).filter((r) => r.title && r.title !== '(untitled)');
-      bo.innerHTML = '<div class="loading">Checking for duplicates…</div>';
-      const existing = await fetchAll('papers', 'doi,pmid,arxiv_id,title');
-      const key = { doi: new Set(), pmid: new Set(), arxiv_id: new Set(), title: new Set() };
-      const normT = (t) => (t || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      for (const x of existing) { for (const k of ['doi', 'pmid', 'arxiv_id']) if (x[k]) key[k].add(x[k]); key.title.add(normT(x.title)); }
-      const fresh = [], dups = [];
-      for (const r of recs) {
-        const dup = ['doi', 'pmid', 'arxiv_id'].some((k) => r[k] && key[k].has(r[k])) || key.title.has(normT(r.title));
-        if (dup) { dups.push(r); continue; }
-        fresh.push(r);
-        for (const k of ['doi', 'pmid', 'arxiv_id']) if (r[k]) key[k].add(r[k]);   // de-dup within file too
-        key.title.add(normT(r.title));
-      }
+      bo.innerHTML = '<div class="loading">Matching against the library…</div>';
+      const [existing, projects] = await Promise.all([
+        fetchAll('papers', 'id,title,tags,' + FILLABLE.join(',')),
+        sb.from('projects').select('id,title,status').neq('status', 'archived').order('updated_at', { ascending: false }).then(check),
+      ]);
+      const plan = planImport(recs, existing);
+      const n = (st) => plan.filter((x) => x.status === st).length;
+      const nNew = n('new'), nEx = n('existing'), nRep = n('repeat');
+      const statusCell = (x) => (x.status === 'new' ? '<span class="pill new">new</span>'
+        : x.status === 'existing' ? `<a class="pill ex" href="#/paper/${x.existing.id}" target="_blank" title="matched by ${x.matchedBy}">in library</a>`
+          : '<span class="pill rep" title="appears earlier in this file">repeat</span>');
+      const defaultProject = params.project || '';
       bo.innerHTML = `
-        <p><b>${recs.length}</b> references parsed · <b>${fresh.length}</b> new · <span class="muted">${dups.length} duplicates skipped</span></p>
-        ${fresh.length ? `<table class="tbl"><thead><tr><th>Title</th><th>Authors</th><th>Year</th><th>IDs</th><th>Tags</th></tr></thead><tbody>
-          ${fresh.slice(0, 200).map((r) => `<tr><td>${esc(r.title)}</td><td>${esc(authorsShort(r.authors, 2))}</td><td>${r.year || ''}</td>
-            <td class="small">${r.doi ? 'DOI ' : ''}${r.pmid ? 'PMID ' : ''}${r.arxiv_id ? 'arXiv' : ''}</td><td class="small">${esc((r.tags || []).join(', '))}</td></tr>`).join('')}
-          </tbody></table>${fresh.length > 200 ? `<p class="muted">…and ${fresh.length - 200} more</p>` : ''}
-          <label class="row"><input type="checkbox" id="enrich"> Fetch missing abstracts from Europe PMC (slower: ~3 papers/s)</label>
-          <div class="row end"><button class="primary" id="go">Import ${fresh.length} papers</button></div>
-          <progress id="prog" max="${fresh.length}" value="0" hidden></progress>` : ''}`;
-      bo.querySelector('#go')?.addEventListener('click', async (ev) => {
-        ev.target.disabled = true;
-        const extra = parseTags(root.querySelector('#bulk-tags').value);
-        const prog = bo.querySelector('#prog');
+        <p><b>${recs.length}</b> references parsed · <b>${nNew}</b> new · <b>${nEx}</b> already in library${nRep ? ` · <span class="muted">${nRep} repeated within the file</span>` : ''}</p>
+        <div class="hm-wrap" style="max-height:340px;overflow:auto"><table class="tbl"><thead><tr><th></th><th>Title</th><th>Authors</th><th>Year</th><th>IDs</th><th>File keywords</th></tr></thead><tbody>
+          ${plan.slice(0, 300).map((x) => `<tr><td>${statusCell(x)}</td><td>${esc(x.rec.title)}</td><td>${esc(authorsShort(x.rec.authors, 2))}</td><td>${x.rec.year || ''}</td>
+            <td class="small">${x.rec.doi ? 'DOI ' : ''}${x.rec.pmid ? 'PMID ' : ''}${x.rec.arxiv_id ? 'arXiv' : ''}</td><td class="small">${esc((x.rec.tags || []).join(', '))}</td></tr>`).join('')}
+        </tbody></table>${plan.length > 300 ? `<p class="muted">…and ${plan.length - 300} more</p>` : ''}</div>
+
+        <form id="bulk-opts" class="bulk-opts">
+          <fieldset><legend>Tags</legend>
+            <label>Add these tags to <b>all ${nNew + nEx}</b> papers <input name="tags" placeholder="e.g. zotero, telomere-review"></label>
+            <label class="row"><input type="checkbox" name="fileTags"> Also add the file's keywords to papers already in the library</label>
+          </fieldset>
+          <fieldset><legend>Link to project / idea</legend>
+            <div class="row wrap">
+              <select name="project">
+                <option value="">Don't link</option>
+                <option value="__new__">+ New idea…</option>
+                ${projects.map((pr) => `<option value="${pr.id}" ${pr.id === defaultProject ? 'selected' : ''}>${esc(pr.title)} (${pr.status})</option>`).join('')}
+              </select>
+              <input name="newTitle" placeholder="Title for the new idea" value="${esc(file.name.replace(/\.(bib|bibtex|ris|txt)$/i, ''))}" hidden>
+              <select name="relation">${RELATIONS.map((r) => `<option>${r}</option>`).join('')}</select>
+              <input name="note" placeholder="Link note (optional)">
+            </div>
+            <p class="muted small">Links all ${nNew + nEx} papers. Papers already linked to that project keep their current relation and note.</p>
+          </fieldset>
+          <fieldset><legend>Existing papers</legend>
+            <label class="row"><input type="checkbox" name="fill" checked> Fill in empty fields (abstract, DOI, PMID, journal, year, authors…) from the file. Existing values are never overwritten.</label>
+          </fieldset>
+          <label class="row"><input type="checkbox" name="enrich"> Fetch missing abstracts for new papers from Europe PMC (slower: ~3 papers/s)</label>
+          <div class="row end"><button class="primary" id="go">Import ${nNew} new · update ${nEx} existing</button></div>
+          <progress id="prog" max="${nNew + nEx}" value="0" hidden></progress>
+        </form>`;
+
+      const form = bo.querySelector('#bulk-opts');
+      form.project.onchange = () => { form.newTitle.hidden = form.project.value !== '__new__'; };
+      form.onsubmit = async (ev) => {
+        ev.preventDefault();
+        const btn = form.querySelector('#go');
+        btn.disabled = true;
+        const prog = form.querySelector('#prog');
         prog.hidden = false;
-        if (bo.querySelector('#enrich').checked) {
-          let i = 0;
-          for (const r of fresh) {
-            prog.value = ++i;
-            if (r.abstract || (!r.doi && !r.pmid)) continue;
-            try {
-              const q = r.pmid ? `EXT_ID:${r.pmid} AND SRC:MED` : `DOI:"${r.doi}"`;
-              const [hit] = await searchLiterature(q, 1);
-              if (hit) { r.abstract = hit.abstract; r.pmid = r.pmid || hit.pmid; }
-            } catch { /* skip */ }
-          }
-        }
-        let done = 0;
-        prog.value = 0;
-        for (let i = 0; i < fresh.length; i += 200) {
-          const batch = fresh.slice(i, i + 200).map((r) => ({ ...r, tags: [...new Set([...(r.tags || []), ...extra])], added_by: state.user.id }));
-          try {
-            check(await sb.from('papers').insert(batch));
-            done += batch.length;
-          } catch (err) {
-            // fall back to one-by-one so a single conflict does not lose the batch
-            for (const r of batch) {
-              const { error } = await sb.from('papers').insert(r);
-              if (!error) done++; else console.warn('skip', r.title, error.message);
+        const extra = parseTags(form.tags.value);
+        const report = { inserted: 0, updated: 0, unchanged: 0, linked: 0, failed: [] };
+        try {
+          // 1. optional abstract enrichment for new papers
+          const fresh = plan.filter((x) => x.status === 'new').map((x) => x.rec);
+          if (form.enrich.checked) {
+            let i = 0;
+            for (const r of fresh) {
+              prog.value = ++i;
+              if (r.abstract || (!r.doi && !r.pmid)) continue;
+              try {
+                const [hit] = await searchLiterature(r.pmid ? `EXT_ID:${r.pmid} AND SRC:MED` : `DOI:"${r.doi}"`, 1);
+                if (hit) { r.abstract = hit.abstract; r.pmid = r.pmid || hit.pmid; }
+              } catch { /* skip */ }
             }
           }
-          prog.value = done;
-        }
-        toast(`Imported ${done} papers`, 'ok', 6000);
-        bo.insertAdjacentHTML('beforeend', `<p class="ok">Imported ${done} of ${fresh.length}. <a href="#/papers?sort=added">View library →</a> ·
-          <a href="#" id="to-links">Build links among papers ↓</a></p>`);
-        bo.querySelector('#to-links').onclick = async (ev2) => {
-          ev2.preventDefault();
-          const lb = root.querySelector('#link-builder');
-          await renderLinkBuilder(lb);
-          lb.scrollIntoView({ behavior: 'smooth' });
-        };
-      });
+          prog.value = 0;
+          // 2. insert new papers, keeping their ids
+          const idOf = new Map();   // plan index → paper id
+          const newIdx = plan.map((x, i) => (x.status === 'new' ? i : -1)).filter((i) => i >= 0);
+          for (let b = 0; b < newIdx.length; b += 200) {
+            const chunk = newIdx.slice(b, b + 200);
+            const rows = chunk.map((i) => ({ ...plan[i].rec, tags: [...new Set([...(plan[i].rec.tags || []), ...extra])], added_by: state.user.id }));
+            const { data, error } = await sb.from('papers').insert(rows).select('id');
+            if (!error && data?.length === rows.length) {
+              chunk.forEach((i, k) => idOf.set(i, data[k].id));
+              report.inserted += rows.length;
+            } else {
+              for (let k = 0; k < rows.length; k++) {   // one by one so a single conflict doesn't lose the batch
+                const r1 = await sb.from('papers').insert(rows[k]).select('id').single();
+                if (r1.error) report.failed.push(`${rows[k].title}: ${r1.error.message}`);
+                else { idOf.set(chunk[k], r1.data.id); report.inserted++; }
+              }
+            }
+            prog.value = report.inserted;
+          }
+          // 3. update existing papers (tags + empty fields)
+          const exIdx = plan.map((x, i) => (x.status === 'existing' ? i : -1)).filter((i) => i >= 0);
+          const patched = new Set();
+          for (const i of exIdx) {
+            const x = plan[i];
+            idOf.set(i, x.existing.id);
+            if (patched.has(x.existing.id)) continue;      // several file records matched one paper
+            patched.add(x.existing.id);
+            const patch = mergePatch(x.existing, x.rec, { extraTags: extra, fileTags: form.fileTags.checked, fill: form.fill.checked });
+            if (!patch) { report.unchanged++; continue; }
+            let { error } = await sb.from('papers').update(patch).eq('id', x.existing.id);
+            if (error && /duplicate key/i.test(error.message)) {
+              // a filled identifier belongs to another library paper: retry without identifiers
+              for (const k of ['doi', 'pmid', 'arxiv_id']) delete patch[k];
+              ({ error } = Object.keys(patch).length ? await sb.from('papers').update(patch).eq('id', x.existing.id) : { error: null });
+            }
+            if (error) report.failed.push(`${x.existing.title}: ${error.message}`); else report.updated++;
+            prog.value = report.inserted + report.updated + report.unchanged;
+          }
+          // 4. link to project
+          let projectId = form.project.value;
+          if (projectId === '__new__') {
+            const row = check(await sb.from('projects').insert({ title: form.newTitle.value.trim() || file.name, tags: extra,
+              summary: `Created from import of ${file.name}.` }).select('id').single());
+            projectId = row.id;
+          }
+          if (projectId) {
+            const pids = [...new Set(idOf.values())];
+            for (let b = 0; b < pids.length; b += 500) {
+              const rows = pids.slice(b, b + 500).map((pid) => ({ project_id: projectId, paper_id: pid, relation: form.relation.value, note: form.note.value || null }));
+              check(await sb.from('project_papers').upsert(rows, { onConflict: 'project_id,paper_id', ignoreDuplicates: true }));
+            }
+            report.linked = pids.length;
+          }
+          toast(`Import done: ${report.inserted} new, ${report.updated} updated`, 'ok', 6000);
+          form.insertAdjacentHTML('afterend', `<div class="ok import-report">
+            <p><b>${report.inserted}</b> new papers added · <b>${report.updated}</b> existing papers updated · ${report.unchanged} already up to date
+              ${projectId ? ` · <b>${report.linked}</b> papers linked to <a href="#/project/${projectId}?tab=papers">the project →</a>` : ''}</p>
+            ${report.failed.length ? `<details class="error"><summary>${report.failed.length} problems</summary><ul class="small">${report.failed.map((f) => `<li>${esc(f)}</li>`).join('')}</ul></details>` : ''}
+            <p><a href="#/papers?sort=updated">View library →</a> · <a href="#" id="to-links">Build links among papers ↓</a></p></div>`);
+          bo.querySelector('#to-links').onclick = async (ev2) => {
+            ev2.preventDefault();
+            const lb = root.querySelector('#link-builder');
+            await renderLinkBuilder(lb);
+            lb.scrollIntoView({ behavior: 'smooth' });
+          };
+        } catch (err) { fail(err, 'Import'); btn.disabled = false; }
+      };
     } catch (err) { fail(err, 'Import'); bo.innerHTML = ''; }
   };
 }

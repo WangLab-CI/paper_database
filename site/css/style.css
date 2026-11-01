@@ -273,3 +273,14 @@ ul.sugg .reasons { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 3p
 ul.sugg .reasons span::before { content: "• "; }
 ul.sugg .score { font-variant-numeric: tabular-nums; font-size: .85em; color: var(--muted); min-width: 34px; text-align: right; }
 ul.sugg select.rel-pick { width: auto; padding: 3px 6px; }
+
+/* bulk import */
+.pill { display: inline-block; font-size: .72em; font-weight: 600; padding: 1px 7px; border-radius: 99px; white-space: nowrap; }
+.pill.new { background: var(--ins); color: var(--fg); }
+.pill.ex { background: var(--hover); color: var(--accent); border: 1px solid var(--line); }
+.pill.rep { background: var(--hover); color: var(--muted); }
+.bulk-opts fieldset label { font-weight: 400; }
+.bulk-opts .row > input[name=note] { flex: 2; }
+.import-report { margin-top: 10px; }
+.row > input[type=checkbox], .row > input[type=radio] { flex: none; width: auto; margin: 0 6px 0 0; }
+label.row { justify-content: flex-start; gap: 0; }

@@ -178,7 +178,8 @@ function papersTab(el, p, links, reload) {
   el.innerHTML = `
     <div class="card">
       <div class="row between"><p class="muted">Literature supporting, contradicting or enabling this project.</p>
-        <button class="primary" id="add">+ Link paper</button></div>
+        <div class="row"><a class="button" href="#/import?project=${p.id}" title="Import a Zotero/BibTeX/RIS file and link every paper in it to this project">Import file into project</a>
+        <button class="primary" id="add">+ Link paper</button></div></div>
       ${by.length ? by.map(([rel, ls]) => `
         <h3><span class="rel rel-${rel}">${rel}</span> <small>${ls.length}</small></h3>
         <ul class="list">${ls.map((l) => `

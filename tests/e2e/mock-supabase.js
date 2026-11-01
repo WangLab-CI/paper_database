@@ -82,11 +82,12 @@ class Q {
   constructor(t) { Object.assign(this, { t, op: 'select', filters: [], embedFilters: [], orders: [], from: 0, to: Infinity, cols: '*', returning: false }); }
   select(cols = '*', opts = {}) { if (this.op === 'select') { this.cols = cols; this.opts = opts; } else { this.returning = true; this.cols = cols; } return this; }
   insert(rows) { this.op = 'insert'; this.payload = [].concat(rows); return this; }
-  upsert(rows) { this.op = 'upsert'; this.payload = [].concat(rows); return this; }
+  upsert(rows, opts = {}) { this.op = 'upsert'; this.payload = [].concat(rows); this.ignoreDup = !!opts.ignoreDuplicates; return this; }
   update(p) { this.op = 'update'; this.payload = p; return this; }
   delete() { this.op = 'delete'; return this; }
   _f(col, fn) { if (col.includes('.')) { const [a, c] = col.split('.'); this.embedFilters.push([a, c, fn]); } else this.filters.push((r) => fn(r[col])); return this; }
   eq(c, v) { return this._f(c, (x) => x === v); }
+  neq(c, v) { return this._f(c, (x) => x !== v); }
   gte(c, v) { return this._f(c, (x) => x >= v); }
   in(c, vs) { return this._f(c, (x) => vs.includes(x)); }
   not(c, op, v) { return this._f(c, (x) => (op === 'is' && v === null ? x != null : x !== v)); }
@@ -130,6 +131,7 @@ class Q {
         const row = { ...(DEFAULTS[this.t]?.() || {}), ...p };
         const clash = this.violates(row);
         if (clash) {
+          if (this.op === 'upsert' && this.ignoreDup) continue;
           if (this.op === 'upsert') { const ex = DB[this.t].find((r) => clash.every((c) => r[c] === row[c])); Object.assign(ex, p, { updated_at: now() }); made.push(ex); continue; }
           return { data: null, error: { message: `duplicate key value violates unique constraint (${clash})` } };
         }

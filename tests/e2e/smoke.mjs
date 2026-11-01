@@ -130,10 +130,37 @@ try {
   await page.waitForSelector('#go');
   const summary = await page.locator('#bulk-out p').first().innerText();
   if (!/3 references parsed · 2 new/.test(summary.replace(/\s+/g, ' '))) throw new Error('bad import summary: ' + summary);
-  await page.fill('#bulk-tags', 'zotero');
+  await page.fill('#bulk-opts [name=tags]', 'zotero');
   await page.click('#go');
-  await page.waitForSelector('#bulk-out .ok');
-  ok('BibTeX bulk import with duplicate detection');
+  await page.waitForSelector('#bulk-out .import-report');
+  ok('BibTeX bulk import with duplicate matching');
+
+  // import into a project: existing papers are matched, tagged, filled and linked
+  await go('#/projects');
+  await page.click('.pcard a.title >> text=Organoid TP53 screen');
+  await page.click('.tabs a:has-text("Papers")');
+  await page.click('a:has-text("Import file into project")');
+  await page.setInputFiles('#file', { name: 'collection.ris', mimeType: 'text/plain', buffer: Buffer.from(
+    'TY  - JOUR\nTI  - Spatial atlas of PDAC\nAB  - Filled abstract from Zotero.\nDO  - 10.1000/b\nER  - \n' +
+    'TY  - JOUR\nTI  - Telomere crisis drives evolution\nAU  - Roe, J\nPY  - 2019\nER  - \n') });
+  await page.waitForSelector('#go');
+  const s2 = (await page.locator('#bulk-out p').first().innerText()).replace(/\s+/g, ' ');
+  if (!/2 references parsed · 1 new · 1 already in library/.test(s2)) throw new Error('plan summary: ' + s2);
+  if (!(await page.locator('#bulk-opts [name=project] option:checked').innerText()).includes('Organoid TP53 screen')) throw new Error('project not preselected');
+  await page.fill('#bulk-opts [name=tags]', 'telomere-review');
+  await page.locator('#bulk-opts').scrollIntoViewIfNeeded();
+  await shot('import-project');
+  await page.selectOption('#bulk-opts [name=relation]', 'supports');
+  await page.click('#go');
+  await page.waitForSelector('.import-report:has-text("2 papers linked")');
+  const db = await page.evaluate(() => {
+    const D = window.__MOCK_DB__; const sp = D.papers.find((x) => x.title === 'Spatial atlas of PDAC');
+    return { tags: sp.tags, abstract: sp.abstract, n: D.papers.filter((x) => x.title === 'Spatial atlas of PDAC').length,
+      links: D.project_papers.filter((l) => l.relation === 'supports').length };
+  });
+  if (db.n !== 1 || !db.tags.includes('telomere-review') || db.abstract !== 'Filled abstract from Zotero.' || db.links < 2)
+    throw new Error('existing paper not merged: ' + JSON.stringify(db));
+  ok('import into project: duplicate merged (tag + abstract), all papers linked');
 
   // automatic paper links
   await page.waitForSelector('#lb button.primary');
@@ -144,8 +171,8 @@ try {
   ok('build links: citation + shared-reference links from OpenAlex');
 
   await go('#/papers?tag=zotero');
-  if ((await page.locator('.paper-row').count()) !== 2) throw new Error('imported papers not tagged');
-  ok('imported papers carry bulk tag');
+  if ((await page.locator('.paper-row').count()) !== 3) throw new Error('imported + matched papers not tagged');
+  ok('bulk tag applied to new and already-present papers');
 
   await go('#/papers?q=TP53');
   await page.click('.paper-row a.title');

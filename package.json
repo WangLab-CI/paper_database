@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Lab paper & project-idea portal (static site + Supabase)",
   "scripts": {
-    "test": "node --test tests/parsers.test.mjs tests/links.test.mjs tests/insights.test.mjs tests/suggest.test.mjs",
+    "test": "node --test tests/parsers.test.mjs tests/links.test.mjs tests/insights.test.mjs tests/suggest.test.mjs tests/importplan.test.mjs",
     "test:e2e": "node tests/e2e/smoke.mjs",
     "serve": "python3 -m http.server 8000 -d site"
   }
