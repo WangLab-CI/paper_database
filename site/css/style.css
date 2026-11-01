@@ -205,3 +205,63 @@ del { background: var(--del); }
   .paper-row { flex-direction: column; }
   .paper-row .side { flex-direction: row; align-items: center; }
 }
+
+/* ---------- insights charts (reference palette: sequential blue, categorical slots 1–3) */
+:root {
+  --seq-0: #eef0f2; --seq-1: #cde2fb; --seq-2: #9ec5f4; --seq-3: #6da7ec; --seq-4: #3987e5;
+  --seq-5: #256abf; --seq-6: #184f95; --seq-7: #0d366b;
+  --cat-1: #2a78d6; --cat-2: #eb6834; --cat-3: #1baf7a; --cat-other: #a3a29c;
+  --grid: #e6e6e3; --axis: #6b7280;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    --seq-0: #23272e; --seq-1: #104281; --seq-2: #184f95; --seq-3: #256abf; --seq-4: #2a78d6;
+    --seq-5: #5598e7; --seq-6: #86b6ef; --seq-7: #b7d3f6;
+    --cat-1: #3987e5; --cat-2: #d95926; --cat-3: #199e70; --cat-other: #6f6e69;
+    --grid: #30343b; --axis: #9aa3af;
+  }
+}
+.tabs.flat { margin: 6px 0 14px; padding: 0; border-top: none; border-bottom: 1px solid var(--line); }
+.viz-controls { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 6px; }
+.viz-controls label { margin: 0; font-size: .85em; color: var(--muted); }
+.viz-controls select { width: auto; display: block; }
+.hm-wrap { overflow-x: auto; }
+svg.heatmap text, svg.linechart text { fill: var(--muted); font-size: 11px; }
+svg.heatmap .hm-rl { fill: var(--fg); font-size: 12px; }
+svg.heatmap .hm-rl.clickable { fill: var(--accent); cursor: pointer; text-decoration: underline; }
+.hm-cell { fill: var(--seq-0); }
+.hm-cell:hover { stroke: var(--fg); stroke-width: 1.5; }
+.s1 { fill: var(--seq-1); background: var(--seq-1); } .s2 { fill: var(--seq-2); background: var(--seq-2); }
+.s3 { fill: var(--seq-3); background: var(--seq-3); } .s4 { fill: var(--seq-4); background: var(--seq-4); }
+.s5 { fill: var(--seq-5); background: var(--seq-5); } .s6 { fill: var(--seq-6); background: var(--seq-6); }
+.s7 { fill: var(--seq-7); background: var(--seq-7); }
+.hm-legend { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin: 6px 0; color: var(--muted); }
+.hm-legend i { display: inline-block; width: 18px; height: 10px; border-radius: 2px; }
+.hm-legend .lg { margin-right: 12px; color: var(--fg); }
+.hm-legend .sw { display: inline-block; width: 16px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+.sw.c1 { background: var(--cat-1); } .sw.c2 { background: var(--cat-2); }
+svg.linechart .grid { stroke: var(--grid); stroke-width: 1; }
+svg.linechart .grid.ref { stroke: var(--axis); stroke-dasharray: 3 3; }
+svg.linechart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+svg.linechart .line.c1 { stroke: var(--cat-1); } svg.linechart .line.c2 { stroke: var(--cat-2); }
+svg.linechart .dot { stroke: var(--card); stroke-width: 2; }
+svg.linechart .pt.c1 { fill: var(--cat-1); } svg.linechart .pt.c2 { fill: var(--cat-2); }
+svg.linechart .dot.c1 { fill: var(--cat-1); } svg.linechart .dot.c2 { fill: var(--cat-2); }
+svg.linechart .dlabel { fill: var(--fg); font-size: 12px; }
+svg.linechart .xhair { stroke: var(--axis); stroke-width: 1; }
+svg.linechart .hit { fill: transparent; }
+.viz-tip { position: fixed; z-index: 200; pointer-events: none; background: var(--card); color: var(--fg); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 10px; font-size: .85em; box-shadow: 0 4px 16px rgba(0,0,0,.15); max-width: 320px; }
+.tableview { margin-top: 10px; }
+.group-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; margin-top: 12px; }
+.gcard { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+.gcard:hover { border-color: var(--accent); }
+.gcard h3 { margin-top: 0; } .gcard p { margin: 3px 0; }
+.miss-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 18px; }
+.miss-grid select { width: auto; display: inline; padding: 1px 4px; }
+ol.cands { list-style: none; padding: 0; margin: 0; }
+ol.cands li { display: grid; grid-template-columns: 72px 1fr auto; gap: 10px; align-items: start; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.cbar { display: flex; align-items: center; gap: 6px; margin-top: 3px; font-size: .85em; }
+.cbar .track { flex: 0 0 44px; height: 10px; background: var(--seq-0); border-radius: 0 4px 4px 0; overflow: hidden; }
+.cbar .track span { display: block; height: 100%; background: var(--seq-4); border-radius: 0 4px 4px 0; }
+ol.cands .cbody a { font-weight: 600; color: var(--fg); }

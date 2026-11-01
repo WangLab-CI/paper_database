@@ -6,6 +6,35 @@ import { fetchOpenAlex, computeLinks } from '../links.js';
 
 const AUTO = ['cites', 'coupled', 'similar'];
 
+// Needs an OpenAlex lookup: never checked, or checked before author/topic metadata was stored.
+export const needsEnrichment = (p, refresh = false) =>
+  (p.doi || p.pmid) && (refresh || !p.enriched_at || (p.openalex_id && !p.oa_meta));
+
+// Look papers up in OpenAlex and save the results. Returns the merged paper list.
+export async function enrichPapers(papers, { refresh = false, topicTags = false } = {}, onProgress = () => {}) {
+  const todo = papers.filter((p) => needsEnrichment(p, refresh));
+  if (!todo.length) return { papers, checked: 0, found: 0 };
+  const recs = await fetchOpenAlex(todo, onProgress);
+  const stamp = new Date().toISOString();
+  const rows = todo.map((p) => {
+    const r = recs.get(p.id);
+    const row = { id: p.id, title: p.title, enriched_at: stamp };
+    if (r) {
+      Object.assign(row, r);
+      if (topicTags && !(p.tags || []).length && r.oa_topics[0]) row.tags = [r.oa_topics[0].toLowerCase()];
+    }
+    return row;
+  });
+  // rows differ in their keys; group so every upsert batch has identical columns
+  const groups = new Map();
+  for (const r of rows) { const k = Object.keys(r).sort().join(','); (groups.get(k) || groups.set(k, []).get(k)).push(r); }
+  for (const g of groups.values()) for (let i = 0; i < g.length; i += 200) {
+    check(await sb.from('papers').upsert(g.slice(i, i + 200), { onConflict: 'id' }));
+  }
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return { papers: papers.map((p) => ({ ...p, ...(byId.get(p.id) || {}) })), checked: todo.length, found: recs.size };
+}
+
 export async function renderLinkBuilder(el) {
   const [{ count: total }, { count: enriched }, { count: nLinks }] = await Promise.all([
     sb.from('papers').select('id', { count: 'exact', head: true }),
@@ -42,34 +71,14 @@ export async function renderLinkBuilder(el) {
     const say = (html) => { status.innerHTML = html; };
     try {
       say('<p class="loading">Loading library…</p>');
-      let papers = await fetchAll('papers', 'id,title,abstract,doi,pmid,tags,openalex_id,refs,enriched_at');
+      let papers = await fetchAll('papers', 'id,title,abstract,doi,pmid,tags,openalex_id,refs,enriched_at,oa_meta');
 
       // 1. OpenAlex enrichment
-      const todo = papers.filter((p) => (form.refresh.checked || !p.enriched_at) && (p.doi || p.pmid));
-      let found = 0;
-      if (todo.length) {
-        say(`<p>Looking up ${todo.length} papers in OpenAlex… <progress id="lb-prog" max="${todo.length}" value="0"></progress></p>`);
-        const recs = await fetchOpenAlex(todo, (d) => { const pr = status.querySelector('#lb-prog'); if (pr) pr.value = d; });
-        found = recs.size;
-        const stamp = new Date().toISOString();
-        const rows = todo.map((p) => {
-          const r = recs.get(p.id);
-          const row = { id: p.id, title: p.title, enriched_at: stamp };
-          if (r) {
-            Object.assign(row, r);
-            if (form.topicTags.checked && !(p.tags || []).length && r.oa_topics[0]) row.tags = [r.oa_topics[0].toLowerCase()];
-          }
-          return row;
-        });
-        // rows differ in their keys; group so every upsert batch has identical columns
-        const groups = new Map();
-        for (const r of rows) { const k = Object.keys(r).sort().join(','); (groups.get(k) || groups.set(k, []).get(k)).push(r); }
-        for (const g of groups.values()) for (let i = 0; i < g.length; i += 200) {
-          check(await sb.from('papers').upsert(g.slice(i, i + 200), { onConflict: 'id' }));
-        }
-        const byId = new Map(rows.map((r) => [r.id, r]));
-        papers = papers.map((p) => ({ ...p, ...(byId.get(p.id) || {}) }));
-      }
+      const todoN = papers.filter((p) => needsEnrichment(p, form.refresh.checked)).length;
+      if (todoN) say(`<p>Looking up ${todoN} papers in OpenAlex… <progress id="lb-prog" max="${todoN}" value="0"></progress></p>`);
+      const { papers: updated, checked, found } = await enrichPapers(papers, { refresh: form.refresh.checked, topicTags: form.topicTags.checked },
+        (d) => { const pr = status.querySelector('#lb-prog'); if (pr) pr.value = d; });
+      papers = updated;
 
       // 2. Compute links
       say('<p class="loading">Computing links…</p>');
@@ -84,7 +93,7 @@ export async function renderLinkBuilder(el) {
 
       const n = (k) => links.filter((l) => l.kind === k).length;
       const noId = papers.filter((p) => !p.doi && !p.pmid).length;
-      say(`<p class="ok">Done. ${todo.length ? `OpenAlex matched ${found} of ${todo.length} papers checked. ` : ''}
+      say(`<p class="ok">Done. ${checked ? `OpenAlex matched ${found} of ${checked} papers checked. ` : ''}
         Stored <b>${n('cites')}</b> citation links, <b>${n('coupled')}</b> shared-reference links and <b>${n('similar')}</b> similar-wording links.</p>
         ${noId ? `<p class="muted small">${noId} papers have no DOI/PMID, so only text similarity can link them.</p>` : ''}
         <p><a href="#/graph">View in the graph →</a></p>`);

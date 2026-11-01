@@ -6,7 +6,7 @@
 import { normalizeDoi } from './util.js';
 
 const OA = 'https://api.openalex.org/works';
-const OA_SELECT = 'id,doi,ids,referenced_works,cited_by_count,topics';
+const OA_SELECT = 'id,doi,ids,referenced_works,cited_by_count,topics,authorships,publication_year,related_works';
 const shortOa = (u) => (u ? String(u).replace('https://openalex.org/', '') : null);
 
 async function oaFilter(key, values) {
@@ -16,14 +16,37 @@ async function oaFilter(key, values) {
   return (await r.json()).results || [];
 }
 
-function oaRecord(w) {
+// Compact author list: consortium papers keep the first 20 and last 10 authors (PIs are usually last).
+function compactAuthors(auths = []) {
+  const keep = auths.length > 30 ? [...auths.slice(0, 20), ...auths.slice(-10)] : auths;
+  return keep.map((a) => ({
+    id: shortOa(a.author?.id), name: a.author?.display_name || a.raw_author_name || '',
+    pos: a.author_position,
+    inst: (a.institutions || []).slice(0, 3).map((i) => ({ id: shortOa(i.id), name: i.display_name, country: i.country_code || null })),
+    countries: a.countries || [],
+  }));
+}
+
+export function oaRecord(w) {
   return {
     openalex_id: shortOa(w.id),
     refs: (w.referenced_works || []).map(shortOa),
     cited_by_count: w.cited_by_count ?? null,
     oa_topics: (w.topics || []).slice(0, 3).map((t) => t.display_name),
+    oa_meta: {
+      year: w.publication_year ?? null,
+      n_authors: (w.authorships || []).length,
+      topics: (w.topics || []).slice(0, 3).map((t) => ({
+        id: shortOa(t.id), name: t.display_name, score: t.score,
+        subfield: t.subfield?.display_name || null, field: t.field?.display_name || null, domain: t.domain?.display_name || null,
+      })),
+      authors: compactAuthors(w.authorships),
+      related: (w.related_works || []).map(shortOa),
+    },
   };
 }
+
+export { shortOa };
 
 // Look up papers (by DOI, else PMID) in OpenAlex. Returns Map paperId → record (missing = not found).
 export async function fetchOpenAlex(papers, onProgress = () => {}) {

@@ -39,17 +39,31 @@ const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
-// Fake OpenAlex: paper 10.1000/a cites 10.1000/b; both share 3 references
+// Fake OpenAlex: paper 10.1000/a cites 10.1000/b; both share 3 references and 2 authors
+const oaAuth = (id, name, inst, cc) => ({ author: { id: `https://openalex.org/${id}`, display_name: name }, author_position: 'middle',
+  institutions: [{ id: `https://openalex.org/I${inst}`, display_name: inst, country_code: cc }], countries: [cc] });
+const oaTopic = (id, name, sub, field) => ({ id: `https://openalex.org/${id}`, display_name: name, score: 0.9,
+  subfield: { display_name: sub }, field: { display_name: field }, domain: { display_name: 'Life Sciences' } });
+const OAW = {
+  '10.1000/a': { id: 'https://openalex.org/W1', doi: 'https://doi.org/10.1000/a', ids: {}, cited_by_count: 10, publication_year: 2021,
+    topics: [oaTopic('T1', 'Cancer Genomics', 'Oncology', 'Medicine')], related_works: ['https://openalex.org/W80'],
+    authorships: [oaAuth('A1', 'Ann Smith', 'Cambridge', 'GB'), oaAuth('A2', 'Bo Li', 'Cambridge', 'GB'), oaAuth('A3', 'Cy Doe', 'MIT', 'US')],
+    referenced_works: ['https://openalex.org/W2', 'https://openalex.org/W7', 'https://openalex.org/W8', 'https://openalex.org/W9'] },
+  '10.1000/b': { id: 'https://openalex.org/W2', doi: 'https://doi.org/10.1000/b', ids: {}, cited_by_count: 3, publication_year: 2024,
+    topics: [oaTopic('T2', 'Spatial Transcriptomics', 'Molecular Biology', 'Biochemistry')], related_works: ['https://openalex.org/W80'],
+    authorships: [oaAuth('A1', 'Ann Smith', 'Cambridge', 'GB'), oaAuth('A2', 'Bo Li', 'Cambridge', 'GB')],
+    referenced_works: ['https://openalex.org/W7', 'https://openalex.org/W8', 'https://openalex.org/W9'] },
+};
+const oaMeta = (id, title) => ({ id: `https://openalex.org/${id}`, doi: `https://doi.org/10.5555/${id.toLowerCase()}`, display_name: title, publication_year: 2015,
+  cited_by_count: 1234, primary_location: { source: { display_name: 'Nature Methods' } }, authorships: [oaAuth('A9', 'Dee Founder', 'EMBL', 'DE')] });
 await page.route('https://api.openalex.org/**', (route) => {
-  const works = {
-    '10.1000/a': { id: 'https://openalex.org/W1', doi: 'https://doi.org/10.1000/a', ids: {}, cited_by_count: 10, topics: [{ display_name: 'Cancer Genomics' }],
-      referenced_works: ['https://openalex.org/W2', 'https://openalex.org/W7', 'https://openalex.org/W8', 'https://openalex.org/W9'] },
-    '10.1000/b': { id: 'https://openalex.org/W2', doi: 'https://doi.org/10.1000/b', ids: {}, cited_by_count: 3, topics: [],
-      referenced_works: ['https://openalex.org/W7', 'https://openalex.org/W8', 'https://openalex.org/W9'] },
-  };
   const u = decodeURIComponent(route.request().url());
-  const results = Object.entries(works).filter(([d]) => u.includes(d)).map(([, w]) => w);
-  route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ results }) });
+  let body;
+  if (u.includes('group_by=')) body = { group_by: [{ key: '2021', count: u.includes('primary_topic') ? 50 : 1e6 }, { key: '2024', count: u.includes('primary_topic') ? 90 : 1.1e6 }] };
+  else if (u.includes('filter=openalex:')) body = { results: ['W7', 'W8', 'W9', 'W80'].filter((w) => u.includes(w)).map((w) => oaMeta(w, `Landmark method ${w}`)) };
+  else if (u.includes('filter=cites:')) body = { results: [{ ...oaMeta('W60', 'New work citing both'), publication_year: 2026, referenced_works: ['https://openalex.org/W1', 'https://openalex.org/W2'] }] };
+  else body = { results: Object.entries(OAW).filter(([d]) => u.includes(d)).map(([, w]) => w) };
+  route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body) });
 });
 await page.route('https://cdn.jsdelivr.net/npm/**', (route) => {
   const key = route.request().url().split('/npm/')[1];
@@ -210,6 +224,38 @@ try {
   await page.click('[data-approve="new@x.org"]');
   await page.waitForFunction(() => !document.body.innerText.includes('Waiting for access'));
   ok('admin approves pending user');
+
+  // ---- Insights
+  await go('#/insights?tab=trends&level=topic');
+  await page.waitForSelector('svg.heatmap .hm-cell.s7');
+  await page.hover('svg.heatmap .hm-cell.s7 >> nth=0');
+  await page.waitForSelector('#viz-tip:not([hidden])');
+  await page.click('svg.heatmap .hm-rl.clickable >> nth=0');
+  await page.waitForSelector('svg.linechart circle.pt.c2');
+  ok('insights: topic × year heatmap, tooltip, library-vs-literature trend');
+  await shot('insights-trends');
+
+  await go('#/insights?tab=geo');
+  await page.waitForSelector('svg.heatmap text:has-text("United Kingdom")');
+  ok('insights: countries × fields heatmap');
+  await go('#/insights?tab=geo&by=institution');
+  await page.waitForSelector('svg.heatmap text:has-text("Cambridge")');
+
+  await go('#/insights?tab=groups');
+  await page.waitForSelector('.gcard:has-text("Ann Smith")');
+  await page.waitForSelector('#co-net canvas');
+  ok('insights: collaboration group detected');
+  await shot('insights-groups');
+
+  await go('#/insights?tab=missing');
+  await page.waitForSelector('#m-cited li:has-text("Landmark method W7")');
+  await page.waitForSelector('#m-related li:has-text("Landmark method W80")');
+  await page.click('#m-cite-go');
+  await page.waitForSelector('#m-citing li:has-text("New work citing both")');
+  await page.click('#m-cited li >> nth=0 >> button');
+  await page.waitForSelector('#m-cited li >> nth=0 >> button:has-text("Added")');
+  ok('insights: foundational / emerging / suggested works; add to library');
+  await shot('insights-missing');
 
   await go('#/me');
   await page.fill('#me [name=full_name]', 'Renamed PI');

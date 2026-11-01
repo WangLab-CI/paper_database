@@ -210,6 +210,7 @@ alter table public.papers add column if not exists refs            text[];   -- 
 alter table public.papers add column if not exists cited_by_count  int;
 alter table public.papers add column if not exists oa_topics       text[];
 alter table public.papers add column if not exists enriched_at     timestamptz;
+alter table public.papers add column if not exists oa_meta         jsonb;    -- {year, topics[], authors[], related[]} from OpenAlex
 create index if not exists papers_openalex_idx on public.papers (openalex_id);
 
 create table if not exists public.paper_links (
