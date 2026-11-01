@@ -39,6 +39,18 @@ const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+// Fake OpenAlex: paper 10.1000/a cites 10.1000/b; both share 3 references
+await page.route('https://api.openalex.org/**', (route) => {
+  const works = {
+    '10.1000/a': { id: 'https://openalex.org/W1', doi: 'https://doi.org/10.1000/a', ids: {}, cited_by_count: 10, topics: [{ display_name: 'Cancer Genomics' }],
+      referenced_works: ['https://openalex.org/W2', 'https://openalex.org/W7', 'https://openalex.org/W8', 'https://openalex.org/W9'] },
+    '10.1000/b': { id: 'https://openalex.org/W2', doi: 'https://doi.org/10.1000/b', ids: {}, cited_by_count: 3, topics: [],
+      referenced_works: ['https://openalex.org/W7', 'https://openalex.org/W8', 'https://openalex.org/W9'] },
+  };
+  const u = decodeURIComponent(route.request().url());
+  const results = Object.entries(works).filter(([d]) => u.includes(d)).map(([, w]) => w);
+  route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ results }) });
+});
 await page.route('https://cdn.jsdelivr.net/npm/**', (route) => {
   const key = route.request().url().split('/npm/')[1];
   const file = CDN[key];
@@ -97,8 +109,8 @@ try {
 
   await go('#/import');
   await page.setInputFiles('#file', { name: 'lib.bib', mimeType: 'text/plain', buffer: Buffer.from(
-    `@article{a, title={TP53 loss drives organoid fitness}, doi={10.1/a}, year=2021}
-     @article{b, title={New paper on CAR-T}, author={Wang, G and Li, X}, journal={Science}, year={2025}, keywords={car-t, immunotherapy}, doi={10.9/new}}
+    `@article{a, title={TP53 loss drives organoid fitness}, doi={10.1000/a}, year=2021}
+     @article{b, title={New paper on CAR-T}, author={Wang, G and Li, X}, journal={Science}, year={2025}, keywords={car-t, immunotherapy}, doi={10.9999/new}}
      @article{c, title={Another with organoids}, author={Kim, H}, year={2022}, keywords={organoids}}`) });
   await page.waitForSelector('#go');
   const summary = await page.locator('#bulk-out p').first().innerText();
@@ -108,9 +120,29 @@ try {
   await page.waitForSelector('#bulk-out .ok');
   ok('BibTeX bulk import with duplicate detection');
 
+  // automatic paper links
+  await page.waitForSelector('#lb button.primary');
+  await page.click('#lb button.primary');
+  await page.waitForSelector('#lb-status .ok');
+  const lbText = (await page.locator('#lb-status').innerText()).replace(/\s+/g, ' ');
+  if (!/Stored 1 citation links, 1 shared-reference links/.test(lbText)) throw new Error('link builder: ' + lbText);
+  ok('build links: citation + shared-reference links from OpenAlex');
+
   await go('#/papers?tag=zotero');
   if ((await page.locator('.paper-row').count()) !== 2) throw new Error('imported papers not tagged');
   ok('imported papers carry bulk tag');
+
+  await go('#/papers?q=TP53');
+  await page.click('.paper-row a.title');
+  await page.waitForSelector('#related h3:has-text("Cites (in library)")');
+  await page.waitForSelector('#related h3:has-text("Shares references")');
+  await page.click('#add-rel');
+  await page.waitForSelector('.pick:not(.disabled)');
+  await page.click('.pick:not(.disabled) >> nth=0');
+  await page.fill('.modal [name=note]', 'same model system');
+  await page.click('.modal button.primary');
+  await page.waitForSelector('#related h3:has-text("Linked by lab members")');
+  ok('paper page shows related papers; manual link added');
 
   await go('#/projects');
   await page.waitForSelector('.pcard');

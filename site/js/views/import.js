@@ -4,6 +4,7 @@ import { lookup, searchLiterature, parseIdentifier } from '../metadata.js';
 import { parseReferences } from '../bibtex.js';
 import { paperFormHtml, readPaperForm } from './papers.js';
 import { modal } from '../ui.js';
+import { renderLinkBuilder } from './linkbuilder.js';
 
 export async function importView(root, { params }) {
   const tagNames = (await allTags()).map((t) => t.tag);
@@ -38,7 +39,9 @@ export async function importView(root, { params }) {
         <label>Add tags to all imported <input id="bulk-tags" placeholder="e.g. zotero, review-2026"></label>
       </div>
       <div id="bulk-out"></div>
-    </section>`;
+    </section>
+    <section class="card" id="link-builder"></section>`;
+  renderLinkBuilder(root.querySelector('#link-builder'));
 
   // ---------------------------------------------- single lookup
   const out = root.querySelector('#lookup-out');
@@ -148,7 +151,14 @@ export async function importView(root, { params }) {
           prog.value = done;
         }
         toast(`Imported ${done} papers`, 'ok', 6000);
-        bo.insertAdjacentHTML('beforeend', `<p class="ok">Imported ${done} of ${fresh.length}. <a href="#/papers?sort=added">View library →</a></p>`);
+        bo.insertAdjacentHTML('beforeend', `<p class="ok">Imported ${done} of ${fresh.length}. <a href="#/papers?sort=added">View library →</a> ·
+          <a href="#" id="to-links">Build links among papers ↓</a></p>`);
+        bo.querySelector('#to-links').onclick = async (ev2) => {
+          ev2.preventDefault();
+          const lb = root.querySelector('#link-builder');
+          await renderLinkBuilder(lb);
+          lb.scrollIntoView({ behavior: 'smooth' });
+        };
       });
     } catch (err) { fail(err, 'Import'); bo.innerHTML = ''; }
   };

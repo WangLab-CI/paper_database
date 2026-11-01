@@ -43,6 +43,13 @@ do $$ begin
     assert false, 'direct version insert blocked';
   exception when insufficient_privilege then null; end;
   assert (select n_papers from tag_counts where tag='tp53')=1, 'tag counts';
+  insert into papers(title) values ('Paper B');
+  insert into paper_links(source_id,target_id,kind,score)
+    select a.id, b.id, 'cites', 1 from papers a, papers b where a.title='Paper A' and b.title='Paper B';
+  assert (select count(*) from paper_links)=1, 'member can add paper link';
+  begin insert into paper_links(source_id,target_id,kind) select id,id,'manual' from papers limit 1;
+    assert false, 'self link blocked';
+  exception when check_violation then null; end;
 end $$;
 
 -- ---- admin: notes of others are read-only; allowlist manageable
@@ -63,6 +70,8 @@ end $$;
 -- ---- anon sees nothing
 reset role; set role anon;
 do $$ begin
+  begin perform 1 from paper_links; assert false, 'anon links read should fail';
+  exception when insufficient_privilege then null; end;
   begin perform 1 from papers; assert false, 'anon read should fail';
   exception when insufficient_privilege then null; end;
 end $$;

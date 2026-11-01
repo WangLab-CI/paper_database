@@ -101,12 +101,13 @@ function paperRow(p) {
 
 // ================================================================= detail
 export async function paperView(root, { id }) {
-  const [paper, notes, links, projects, tags] = await Promise.all([
-    sb.from('papers').select(PAPER_COLS).eq('id', id).maybeSingle().then(check),
+  const [paper, notes, links, projects, tags, related] = await Promise.all([
+    sb.from('papers').select(PAPER_COLS + ',openalex_id,cited_by_count,oa_topics').eq('id', id).maybeSingle().then(check),
     sb.from('paper_notes').select('*').eq('paper_id', id).order('updated_at', { ascending: false }).then(check),
     sb.from('project_papers').select('relation,note,project:projects(id,title,status)').eq('paper_id', id).then(check),
     sb.from('projects').select('id,title,status').order('title').then(check),
     allTags(),
+    relatedPapers(id),
   ]);
   if (!paper) { root.innerHTML = '<div class="card">Paper not found. <a href="#/papers">Back</a></div>'; return; }
 
@@ -127,7 +128,10 @@ export async function paperView(root, { id }) {
         ${paper.arxiv_id ? `<a target="_blank" rel="noopener" href="https://arxiv.org/abs/${esc(paper.arxiv_id)}">arXiv ${esc(paper.arxiv_id)}</a>` : ''}
         ${paper.pdf_url ? `<a target="_blank" rel="noopener" href="${esc(paper.pdf_url)}">PDF</a>` : ''}
         ${paper.url && !paper.doi ? `<a target="_blank" rel="noopener" href="${esc(paper.url)}">Link</a>` : ''}
+        ${paper.openalex_id ? `<a target="_blank" rel="noopener" href="https://openalex.org/${esc(paper.openalex_id)}">OpenAlex</a>
+          <span class="muted">cited by ${paper.cited_by_count ?? '?'}</span>` : ''}
       </div>
+      ${paper.oa_topics?.length ? `<p class="meta">OpenAlex topics: ${paper.oa_topics.map(esc).join(' · ')}</p>` : ''}
       <div class="tagline">${tagChips(paper.tags)} <button class="ghost small" id="edit-tags">✎ tags</button></div>
       ${paper.abstract ? `<details open><summary>Abstract</summary><p class="abstract">${esc(paper.abstract)}</p></details>` : '<p class="muted">No abstract stored.</p>'}
       <div class="row">
@@ -173,9 +177,28 @@ export async function paperView(root, { id }) {
             <div class="md">${md(n.body) || '<span class="muted">(no text)</span>'}</div>
           </div>`).join('') : '<p class="muted">No one else has annotated this paper yet.</p>'}
       </section>
-    </div>`;
+    </div>
+    <section class="card" id="related">${relatedHtml(related)}</section>`;
 
   const reload = () => paperView(root, { id });
+
+  root.querySelector('#add-rel').onclick = () => paperPicker((otherId) => {
+    const m = modal('Link related paper', `<form>
+      <label>Why are they related? <input name="note" placeholder="e.g. replicates Fig. 3 in a different cohort"></label>
+      <div class="row end"><button class="primary">Link</button></div></form>`);
+    m.el.querySelector('form').onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        check(await sb.from('paper_links').insert({ source_id: id, target_id: otherId, kind: 'manual', note: e.target.note.value || null }));
+        m.close(); reload();
+      } catch (err) { fail(err, 'Link'); }
+    };
+  }, new Set([id, ...related.map((r) => r.other.id)]));
+  root.querySelectorAll('[data-unlink]').forEach((b) => (b.onclick = async () => {
+    const [src, tgt] = b.dataset.unlink.split('|');
+    try { check(await sb.from('paper_links').delete().eq('source_id', src).eq('target_id', tgt).eq('kind', 'manual')); reload(); }
+    catch (err) { fail(err); }
+  }));
 
   root.querySelector('#my-note').onsubmit = async (e) => {
     e.preventDefault();
@@ -276,4 +299,42 @@ export function paperPicker(onPick, exclude = new Set()) {
   }, 250);
   input.oninput = search;
   search();
+}
+
+// ---------------------------------------------------------- related papers
+async function relatedPapers(id) {
+  const [out, inn] = await Promise.all([
+    sb.from('paper_links').select('*').eq('source_id', id).then(check),
+    sb.from('paper_links').select('*').eq('target_id', id).then(check),
+  ]);
+  const links = [...out, ...inn];
+  if (!links.length) return [];
+  const ids = [...new Set(links.map((l) => (l.source_id === id ? l.target_id : l.source_id)))];
+  const papers = [];
+  for (let i = 0; i < ids.length; i += 100)
+    papers.push(...check(await sb.from('papers').select('id,title,authors,year,journal').in('id', ids.slice(i, i + 100))));
+  const byId = new Map(papers.map((p) => [p.id, p]));
+  return links.map((l) => ({ ...l, outgoing: l.source_id === id, other: byId.get(l.source_id === id ? l.target_id : l.source_id) }))
+    .filter((l) => l.other);
+}
+
+function relatedHtml(rel) {
+  const groups = [
+    ['Cites (in library)', rel.filter((l) => l.kind === 'cites' && l.outgoing), 'Its reference list includes these papers.'],
+    ['Cited by (in library)', rel.filter((l) => l.kind === 'cites' && !l.outgoing), 'These papers cite it.'],
+    ['Shares references', rel.filter((l) => l.kind === 'coupled').sort((a, b) => b.score - a.score), 'Bibliographic coupling: they cite many of the same works.'],
+    ['Similar wording', rel.filter((l) => l.kind === 'similar').sort((a, b) => b.score - a.score), 'Title/abstract word overlap only. Check before relying on it.'],
+    ['Linked by lab members', rel.filter((l) => l.kind === 'manual'), ''],
+  ].filter(([, ls]) => ls.length);
+  const item = (l) => `<li><a href="#/paper/${l.other.id}">${esc(l.other.title)}</a>
+    <div class="meta">${esc(authorsShort(l.other.authors))} ${l.other.year || ''}
+      ${l.kind === 'coupled' ? ` · ${l.shared} shared refs (score ${l.score})` : ''}
+      ${l.kind === 'similar' ? ` · similarity ${l.score}` : ''}
+      ${l.kind === 'manual' ? ` · by ${esc(personName(l.created_by))}${l.note ? ': ' + esc(l.note) : ''}
+        <button class="ghost small" data-unlink="${l.source_id}|${l.target_id}">unlink</button>` : ''}</div></li>`;
+  return `<div class="row between"><h2>Related in library</h2><button class="small" id="add-rel">+ Link related paper</button></div>
+    ${groups.length ? `<div class="grid-2">${groups.map(([title, ls, hint]) => `
+      <div><h3>${title} <small class="muted">${ls.length}</small></h3>${hint ? `<p class="muted small">${hint}</p>` : ''}
+        <ul class="list">${ls.slice(0, 15).map(item).join('')}</ul>${ls.length > 15 ? `<p class="muted small">…and ${ls.length - 15} more (see Graph)</p>` : ''}</div>`).join('')}</div>`
+      : '<p class="muted">No links yet. Use <a href="#/import">Import → Link papers automatically</a>, or add one by hand.</p>'}`;
 }

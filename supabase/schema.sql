@@ -202,6 +202,30 @@ create table if not exists public.project_updates (
 );
 create index if not exists project_updates_project_idx on public.project_updates (project_id, created_at desc);
 
+-- ---------------------------------------------------------------------
+-- Paper ↔ paper links (citations, bibliographic coupling, text similarity)
+-- ---------------------------------------------------------------------
+alter table public.papers add column if not exists openalex_id     text;
+alter table public.papers add column if not exists refs            text[];   -- OpenAlex IDs of cited works
+alter table public.papers add column if not exists cited_by_count  int;
+alter table public.papers add column if not exists oa_topics       text[];
+alter table public.papers add column if not exists enriched_at     timestamptz;
+create index if not exists papers_openalex_idx on public.papers (openalex_id);
+
+create table if not exists public.paper_links (
+  source_id   uuid not null references public.papers(id) on delete cascade,
+  target_id   uuid not null references public.papers(id) on delete cascade,
+  kind        text not null check (kind in ('cites','coupled','similar','manual')),
+  score       real,          -- cites: 1; coupled: shared refs / sqrt(nA*nB); similar: TF-IDF cosine
+  shared      int,           -- coupled: number of shared references
+  note        text,
+  created_by  uuid references public.profiles(id) on delete set null default auth.uid(),
+  created_at  timestamptz not null default now(),
+  primary key (source_id, target_id, kind),
+  check (source_id <> target_id)
+);
+create index if not exists paper_links_target_idx on public.paper_links (target_id);
+
 -- Version bookkeeping ---------------------------------------------------
 create or replace function public.project_before_update() returns trigger
 language plpgsql as $$
@@ -273,6 +297,7 @@ alter table public.projects         enable row level security;
 alter table public.project_versions enable row level security;
 alter table public.project_papers   enable row level security;
 alter table public.project_updates  enable row level security;
+alter table public.paper_links      enable row level security;
 
 -- Nothing is readable by anonymous visitors.
 revoke all on all tables in schema public from anon;
@@ -284,7 +309,7 @@ begin
   for p in select policyname, tablename from pg_policies
            where schemaname = 'public'
              and tablename in ('allowlist','profiles','papers','paper_notes','projects',
-                               'project_versions','project_papers','project_updates') loop
+                               'project_versions','project_papers','project_updates','paper_links') loop
     execute format('drop policy %I on public.%I', p.policyname, p.tablename);
   end loop;
 end $$;
@@ -325,6 +350,10 @@ create policy versions_read on public.project_versions for select to authenticat
 
 create policy pp_read   on public.project_papers for select to authenticated using (public.is_member());
 create policy pp_write  on public.project_papers for all to authenticated
+  using (public.is_member()) with check (public.is_member());
+
+create policy plinks_read  on public.paper_links for select to authenticated using (public.is_member());
+create policy plinks_write on public.paper_links for all to authenticated
   using (public.is_member()) with check (public.is_member());
 
 create policy updates_read   on public.project_updates for select to authenticated using (public.is_member());

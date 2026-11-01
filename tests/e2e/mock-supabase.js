@@ -12,12 +12,12 @@ const DB = window.__MOCK_DB__ = {
     { id: '00000000-0000-0000-0000-00000000000c', email: 'new@x.org', full_name: 'Newcomer', role: 'pending', created_at: now() },
   ],
   allowlist: [{ email: 'pi@lab.org', role: 'admin', created_at: now() }, { email: 'stu@lab.org', role: 'member', created_at: now() }],
-  papers: [], paper_notes: [], projects: [], project_versions: [], project_papers: [], project_updates: [],
+  papers: [], paper_notes: [], paper_links: [], projects: [], project_versions: [], project_papers: [], project_updates: [],
 };
 const P1 = uuid(), P2 = uuid(), PR1 = uuid();
 DB.papers.push(
-  { id: P1, title: 'TP53 loss drives organoid fitness', authors: 'Smith, John; Doe, Ann', journal: 'Nature', year: 2021, abstract: 'An abstract about TP53.', doi: '10.1/a', pmid: '111', arxiv_id: null, url: null, pdf_url: null, bibtex_key: null, entry_type: 'article', tags: ['tp53', 'organoids'], added_by: ME, created_at: now(), updated_at: now() },
-  { id: P2, title: 'Spatial atlas of PDAC', authors: 'Lee, K', journal: 'Cell', year: 2024, abstract: null, doi: '10.1/b', pmid: null, arxiv_id: null, url: null, pdf_url: null, bibtex_key: null, entry_type: 'article', tags: ['pdac', 'organoids'], added_by: ME, created_at: now(), updated_at: now() },
+  { id: P1, title: 'TP53 loss drives organoid fitness', authors: 'Smith, John; Doe, Ann', journal: 'Nature', year: 2021, abstract: 'An abstract about TP53.', doi: '10.1000/a', pmid: '111', arxiv_id: null, url: null, pdf_url: null, bibtex_key: null, entry_type: 'article', tags: ['tp53', 'organoids'], added_by: ME, created_at: now(), updated_at: now() },
+  { id: P2, title: 'Spatial atlas of PDAC', authors: 'Lee, K', journal: 'Cell', year: 2024, abstract: null, doi: '10.1000/b', pmid: null, arxiv_id: null, url: null, pdf_url: null, bibtex_key: null, entry_type: 'article', tags: ['pdac', 'organoids'], added_by: ME, created_at: now(), updated_at: now() },
 );
 DB.projects.push({ id: PR1, title: 'Organoid TP53 screen', status: 'idea', summary: 'Seed summary', hypothesis: 'H0', rationale: '', aims: '', open_questions: '', next_steps: '', tags: ['tp53'], owner_id: ME, collaborators: [], version: 1, last_change_note: null, last_edited_by: ME, created_at: now(), updated_at: now() });
 DB.project_versions.push({ id: 1, project_id: PR1, version: 1, snapshot: { ...DB.projects[0] }, change_note: 'Created', edited_by: ME, created_at: now() });
@@ -31,8 +31,9 @@ const DEFAULTS = {
   project_papers: () => ({ relation: 'background', added_by: ME, created_at: now() }),
   project_updates: () => ({ id: uuid(), author_id: ME, created_at: now() }),
   allowlist: () => ({ role: 'member', created_at: now() }),
+  paper_links: () => ({ created_by: ME, created_at: now(), score: null, shared: null, note: null }),
 };
-const UNIQUE = { papers: [['doi'], ['pmid'], ['arxiv_id']], paper_notes: [['paper_id', 'user_id']], project_papers: [['project_id', 'paper_id']], allowlist: [['email']] };
+const UNIQUE = { papers: [['id'], ['doi'], ['pmid'], ['arxiv_id']], paper_links: [['source_id', 'target_id', 'kind']], paper_notes: [['paper_id', 'user_id']], project_papers: [['project_id', 'paper_id']], allowlist: [['email']] };
 
 function snapshot(p, note) {
   const { last_change_note, version, created_at, updated_at, last_edited_by, ...snap } = p;
@@ -86,7 +87,7 @@ class Q {
   eq(c, v) { return this._f(c, (x) => x === v); }
   gte(c, v) { return this._f(c, (x) => x >= v); }
   in(c, vs) { return this._f(c, (x) => vs.includes(x)); }
-  not(c, op, v) { return this._f(c, (x) => x !== v); }
+  not(c, op, v) { return this._f(c, (x) => (op === 'is' && v === null ? x != null : x !== v)); }
   contains(c, vs) { return this._f(c, (x) => vs.every((v) => (x || []).includes(v))); }
   ilike(c, pat) { const re = new RegExp('^' + pat.replace(/\\([%_\\])/g, '$1').replace(/[.*+?^${}()|[\]]/g, '\\$&').replace(/%/g, '.*') + '$', 'i'); return this._f(c, (x) => re.test(x || '')); }
   textSearch(c, q) {

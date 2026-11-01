@@ -8,12 +8,20 @@ const COLORS = {
   rel: { background: '#999', supports: '#2fb380', contradicts: '#f5222d', method: '#4c8bf5', dataset: '#13a8a8', inspiration: '#b37feb' },
 };
 
+const PL = {
+  cites:   { color: '#4c8bf5', width: 1.6, arrows: 'to', dashes: false, title: 'cites' },
+  coupled: { color: '#13a8a8', width: 1.2, dashes: [6, 4], title: 'shared references' },
+  similar: { color: '#9a9a9a', width: 1, dashes: [2, 4], title: 'similar wording' },
+  manual:  { color: '#b37feb', width: 2, dashes: false, title: 'linked by lab member' },
+};
+
 export async function graphView(root, { params }) {
   if (!window.vis) { root.innerHTML = '<div class="card">Graph library failed to load (check network / ad blocker).</div>'; return; }
-  const [papers, projects, links] = await Promise.all([
+  const [papers, projects, links, plinks] = await Promise.all([
     fetchAll('papers', 'id,title,authors,year,journal,tags'),
     sb.from('projects').select('id,title,status,tags,owner_id,collaborators,summary').then(check),
     fetchAll('project_papers', 'project_id,paper_id,relation'),
+    fetchAll('paper_links', 'source_id,target_id,kind,score,shared'),
   ]);
 
   root.innerHTML = `
@@ -28,6 +36,12 @@ export async function graphView(root, { params }) {
           <label><input type="checkbox" data-type="person"> People</label>
           <label><input type="checkbox" id="g-orphans"> Unconnected papers</label>
           <label><input type="checkbox" id="g-archived"> Archived projects</label>
+        </fieldset>
+        <fieldset><legend>Paper ↔ paper links</legend>
+          <label><input type="checkbox" data-link="cites" checked> <span style="color:${PL.cites.color}">━▶</span> Citations</label>
+          <label><input type="checkbox" data-link="coupled" checked> <span style="color:${PL.coupled.color}">┅</span> Shared references</label>
+          <label><input type="checkbox" data-link="similar"> <span style="color:${PL.similar.color}">┄</span> Similar wording</label>
+          <label><input type="checkbox" data-link="manual" checked> <span style="color:${PL.manual.color}">━</span> Added by lab</label>
         </fieldset>
         <label>Min. concept use <b id="g-mindeg-v">2</b>
           <input type="range" id="g-mindeg" min="1" max="10" value="2"></label>
@@ -66,6 +80,9 @@ export async function graphView(root, { params }) {
     const minDeg = +$('#g-mindeg').value;
     const withOrphans = $('#g-orphans').checked;
     const withArchived = $('#g-archived').checked;
+    const kinds = new Set([...root.querySelectorAll('[data-link]')].filter((c) => c.checked).map((c) => c.dataset.link));
+    const pl = plinks.filter((l) => kinds.has(l.kind));
+    const plinked = new Set(pl.flatMap((l) => [l.source_id, l.target_id]));
     const nodes = new Map(), edges = [];
     const keepTag = (t) => show.tag && tagUse.get(t) >= minDeg;
 
@@ -79,7 +96,7 @@ export async function graphView(root, { params }) {
     }
     if (show.paper) for (const p of papers) {
       const hasTag = (p.tags || []).some(keepTag);
-      if (!withOrphans && !hasTag && !linkedPapers.has(p.id)) continue;
+      if (!withOrphans && !hasTag && !linkedPapers.has(p.id) && !plinked.has(p.id)) continue;
       const fa = authorsShort(p.authors, 1).replace(' et al.', '') || 'Anon';
       nodes.set(`paper:${p.id}`, { id: `paper:${p.id}`, label: `${fa} ${p.year || ''}`, shape: 'dot', size: 8,
         color: COLORS.paper, font: { color: fontColor, size: 11 }, title: p.title, group: 'paper', ref: p });
@@ -91,6 +108,13 @@ export async function graphView(root, { params }) {
     if (show.project && show.paper) for (const l of links) if (projIds.has(l.project_id))
       edges.push({ from: `project:${l.project_id}`, to: `paper:${l.paper_id}`, color: { color: COLORS.rel[l.relation] }, width: 2.5,
         title: l.relation, dashes: l.relation === 'contradicts' });
+    if (show.paper) for (const l of pl) {
+      const st = PL[l.kind];
+      const w = l.kind === 'coupled' || l.kind === 'similar' ? st.width + 3 * Math.min(1, l.score || 0) : st.width;
+      edges.push({ from: `paper:${l.source_id}`, to: `paper:${l.target_id}`, color: { color: st.color, opacity: 0.8 }, width: w,
+        dashes: st.dashes, arrows: st.arrows ? { to: { enabled: true, scaleFactor: 0.5 } } : undefined,
+        title: l.kind === 'coupled' ? `${l.shared} shared references (score ${l.score})` : l.kind === 'similar' ? `similar wording (${l.score})` : st.title });
+    }
     if (show.person) for (const u of state.profiles.values()) {
       if (u.role === 'pending') continue;
       nodes.set(`person:${u.id}`, { id: `person:${u.id}`, label: u.full_name || u.email.split('@')[0], shape: 'dot', size: 14,
