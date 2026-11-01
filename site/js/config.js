@@ -4,9 +4,9 @@
 // paste the values here directly: the anon/publishable key is designed to be
 // public — data is protected by Row Level Security in supabase/schema.sql.
 window.PORTAL_CONFIG = {
-  SUPABASE_URL: "__SUPABASE_URL__",
+  SUPABASE_URL: "https://svdushruibzmvgcilxux.supabase.co",
   SUPABASE_ANON_KEY: "__SUPABASE_ANON_KEY__",
-  LAB_NAME: "__LAB_NAME__",
+  LAB_NAME: "Wang Lab",
   // Sign-in methods shown on the login page: "github", "google", "email"
-  AUTH_PROVIDERS: "__AUTH_PROVIDERS__",
+  AUTH_PROVIDERS: "github,email",
 };
