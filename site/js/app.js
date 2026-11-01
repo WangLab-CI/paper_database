@@ -58,7 +58,14 @@ async function route() {
 function authReturnError() {
   const p = new URLSearchParams(window.__AUTH_RETURN || '');
   const code = p.get('error_code') || p.get('error');
-  if (!code) return '';
+  if (!code) {
+    // Tokens came back but no session was created
+    if (/access_token=|[?&]code=/.test(window.__AUTH_RETURN || '')) {
+      window.__AUTH_RETURN = '';
+      return 'Sign-in details were returned but no session could be created. Check Supabase → Authentication → URL Configuration, then try again.';
+    }
+    return '';
+  }
   window.__AUTH_RETURN = '';
   history.replaceState(null, '', location.pathname);
   if (code === 'otp_expired')
@@ -83,11 +90,11 @@ function loginScreen(msg = '') {
         <div class="sep"><span>or by email</span></div>
         <form id="magic">
           <input type="email" name="email" required placeholder="you@institute.ac.uk" autocomplete="email">
-          <button class="wide">Email me a sign-in code</button>
+          <button class="wide">Email me a sign-in link</button>
         </form>
         <form id="otp" hidden>
-          <p class="small">Enter the code from the email sent to <b id="otp-email"></b>
-            (or click the link in it, if your mail system leaves links intact).</p>
+          <p class="small">Check the email sent to <b id="otp-email"></b> and click its link.
+            If the email shows a 6-digit code, you can enter it here instead.</p>
           <input name="token" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" required placeholder="123456">
           <button class="primary wide">Verify code</button>
           <button type="button" class="ghost small" id="otp-back">Use a different email</button>
