@@ -5,7 +5,7 @@
 // public — data is protected by Row Level Security in supabase/schema.sql.
 window.PORTAL_CONFIG = {
   SUPABASE_URL: "https://svdushruibzmvgcilxux.supabase.co",
-  SUPABASE_ANON_KEY: "__SUPABASE_ANON_KEY__",
+  SUPABASE_ANON_KEY: "sb_publishable_Hr-UaHf_sGA7Iok1bzNaEA_cPdjJXwx",
   LAB_NAME: "Wang Lab",
   // Sign-in methods shown on the login page: "github", "google", "email"
   AUTH_PROVIDERS: "github,email",
