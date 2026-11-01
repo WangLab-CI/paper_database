@@ -71,7 +71,12 @@ function authReturnError() {
   if (code === 'otp_expired')
     return 'That sign-in link had already been used or expired. Institutional mail scanners often open links before you do — ' +
       'request a new email and type the 6-digit code instead of clicking the link.';
-  return `Sign-in failed: ${(p.get('error_description') || code).replace(/\+/g, ' ')}`;
+  let desc = (p.get('error_description') || code).replace(/\+/g, ' ');
+  try { desc = decodeURIComponent(desc); } catch { /* keep as is */ }
+  if (/exchange external code/i.test(desc))
+    desc += ' — the OAuth Client ID/Secret saved in Supabase do not match the GitHub OAuth app. Regenerate the secret and re-save it in Supabase.';
+  if (/rate limit/i.test(desc)) desc += ' — wait an hour, or set up custom SMTP in Supabase.';
+  return `Sign-in failed: ${desc}`;
 }
 
 function loginScreen(msg = '') {
