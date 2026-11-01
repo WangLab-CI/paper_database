@@ -4,13 +4,28 @@ import { sb, check, fetchAll, cleanPaper, findExisting } from '../db.js';
 import { esc, toast, fail, normalizeDoi } from '../util.js';
 import { enrichPapers, needsEnrichment } from './linkbuilder.js';
 import {
-  topicYearMatrix, groupTopicMatrix, collaborationGroups, frequentlyCited, frequentlyRelated, rankCiting, topicIdOf,
+  labelsOf, topicYearMatrix, groupTopicMatrix, collaborationGroups, frequentlyCited, frequentlyRelated, rankCiting, topicIdOf,
 } from '../insights-data.js';
 import { shortOa } from '../links.js';
 
 const OA = 'https://api.openalex.org/works';
 const TABS = [['trends', 'Topic trends'], ['geo', 'Countries & institutes'], ['groups', 'Collaborative groups'], ['missing', 'Missing works']];
-const LEVELS = [['field', 'Field (broad)'], ['subfield', 'Subfield'], ['topic', 'Topic (specific)'], ['tag', 'Lab tags']];
+const LEVELS = [
+  ['topic', 'Topic: primary (specific)'], ['topic_all', 'Topics: all 3 per paper'], ['keyword', 'OpenAlex keywords'],
+  ['mesh', 'MeSH: major terms'], ['mesh_all', 'MeSH: all terms'], ['tag', 'Lab tags'],
+  ['subfield', 'Subfield (broad)'], ['field', 'Field (very broad)'],
+];
+const LEVEL_NOTE = {
+  topic: 'Each paper counts once, under its primary OpenAlex topic (~4,500 topics, assigned by a classifier).',
+  topic_all: 'Each paper counts under each of its up to 3 OpenAlex topics, so a paper can appear in several rows.',
+  keyword: 'OpenAlex keywords: specific terms extracted per paper (e.g. “PARP inhibitor”). A paper can appear in several rows.',
+  mesh: 'Major MeSH headings: the main subjects assigned by NLM indexers. Only PubMed-indexed papers have MeSH; others are left out.',
+  mesh_all: 'All MeSH headings (major and minor), including generic ones such as “Humans” and “Female”; use the filter box to narrow them down.',
+  tag: 'Lab tags as entered in the portal. A paper can appear in several rows.',
+  subfield: 'Subfield of each paper’s primary OpenAlex topic.',
+  field: 'Field of each paper’s primary OpenAlex topic.',
+};
+const TOPIC_LEVELS = new Set(['topic', 'topic_all']);
 const regionName = (() => { try { const d = new Intl.DisplayNames(['en'], { type: 'region' }); return (c) => { try { return d.of(c); } catch { return c; } }; } catch { return (c) => c; } })();
 
 let cache = null;   // papers for this page visit
@@ -65,6 +80,8 @@ function tip(html, ev) {
 const controls = (items) => `<form class="viz-controls">${items.join('')}</form>`;
 const select = (name, opts, val, label) => `<label>${label}<select name="${name}">${opts.map(([v, l]) => `<option value="${v}" ${String(v) === String(val) ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
 function bindControls(el, tab, params) {
+  const form = el.querySelector('.viz-controls');
+  if (form) form.onsubmit = (e) => { e.preventDefault(); form.querySelector('input')?.dispatchEvent(new Event('change')); };
   el.querySelectorAll('.viz-controls select, .viz-controls input').forEach((c) => (c.onchange = () => {
     const f = el.querySelector('.viz-controls');
     const q = new URLSearchParams({ tab });
@@ -78,14 +95,19 @@ function bindControls(el, tab, params) {
 function heatmap({ rows, cols, values, rowLabel = (r) => r.label, colLabel = (c) => c.label, fmt = (v) => v, tipFn, onRow, colEvery = 1 }) {
   const max = Math.max(0, ...values.flat());
   const step = (v) => (v <= 0 || !max ? 0 : Math.min(7, 1 + Math.floor((v / max) * 6.999)));
-  const cw = Math.max(14, Math.min(44, Math.floor(760 / Math.max(1, cols.length)))), ch = 24, lw = 230, th = 70;
-  const W = lw + cols.length * cw + 4, H = th + rows.length * ch + 4;
+  const RMAX = 52, CMAX = 34;   // label truncation (full text in hover title)
+  const rowTxt = rows.map((r) => String(rowLabel(r))), colTxt = cols.map((c) => String(colLabel(c)));
+  const longest = (a, cap) => Math.min(cap, Math.max(4, ...a.map((x) => x.length)));
+  const cw = Math.max(14, Math.min(44, Math.floor(820 / Math.max(1, cols.length)))), ch = 24;
+  const lw = Math.round(Math.min(380, Math.max(110, 14 + 6.6 * longest(rowTxt, RMAX))));
+  const th = Math.round(Math.max(36, 16 + 6.2 * longest(colTxt, CMAX) * 0.72));
+  const W = lw + cols.length * cw + Math.round(6.2 * longest(colTxt, CMAX) * 0.72) + 8, H = th + rows.length * ch + 4;
   const cells = rows.map((r, i) => cols.map((c, j) => {
     const v = values[i][j];
     return `<rect class="hm-cell s${step(v)}" x="${lw + j * cw + 1}" y="${th + i * ch + 1}" width="${cw - 2}" height="${ch - 2}" rx="3" data-i="${i}" data-j="${j}"></rect>`;
   }).join('')).join('');
-  const rl = rows.map((r, i) => `<text class="hm-rl ${onRow ? 'clickable' : ''}" data-row="${i}" x="${lw - 8}" y="${th + i * ch + ch / 2 + 4}" text-anchor="end">${esc(trunc(rowLabel(r), 34))}</text>`).join('');
-  const cl = cols.map((c, j) => (j % colEvery ? '' : `<text class="hm-cl" transform="translate(${lw + j * cw + cw / 2 + 4},${th - 6}) rotate(-50)">${esc(trunc(colLabel(c), 22))}</text>`)).join('');
+  const rl = rowTxt.map((t, i) => `<text class="hm-rl ${onRow ? 'clickable' : ''}" data-row="${i}" x="${lw - 8}" y="${th + i * ch + ch / 2 + 4}" text-anchor="end"><title>${esc(t)}</title>${esc(trunc(t, RMAX))}</text>`).join('');
+  const cl = colTxt.map((t, j) => (j % colEvery ? '' : `<text class="hm-cl" transform="translate(${lw + j * cw + cw / 2 + 3},${th - 6}) rotate(-45)"><title>${esc(t)}</title>${esc(trunc(t, CMAX))}</text>`)).join('');
   const legend = `<div class="hm-legend small"><span>fewer</span>${[1, 2, 3, 4, 5, 6, 7].map((s) => `<i class="s${s}"></i>`).join('')}<span>more</span>
     <span class="muted">· max ${fmt(max)}</span></div>`;
   const html = `<div class="hm-wrap"><svg class="heatmap" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img">${cells}${rl}${cl}</svg></div>${legend}`;
@@ -100,7 +122,15 @@ function heatmap({ rows, cols, values, rowLabel = (r) => r.label, colLabel = (c)
     },
   };
 }
-const trunc = (s, n) => (String(s).length > n ? String(s).slice(0, n - 1) + '…' : String(s));
+// shorten long labels but keep a trailing "(count)"
+const trunc = (s, n) => {
+  s = String(s);
+  if (s.length <= n) return s;
+  const suf = (s.match(/\s\(\d+\)$/) || [''])[0];
+  return s.slice(0, n - 1 - suf.length).trimEnd() + '…' + suf;
+};
+
+const filterBox = (q) => `<label>Only labels containing<input name="q" value="${esc(q)}" placeholder="e.g. parp, brca, telomer" style="width:220px"></label>`;
 
 function tableView(headers, rows) {
   return `<details class="tableview"><summary class="small">Table view</summary><div class="hm-wrap"><table class="tbl">
@@ -110,10 +140,10 @@ function tableView(headers, rows) {
 
 // ================================================================ 1. trends
 function trendsTab(el, papers, params) {
-  const level = params.level || 'subfield', mode = params.mode || 'count', top = +(params.top || 15);
-  // denominators must only include papers that can carry a label at this level
-  const eligible = papers.filter((p) => (level === 'tag' ? p.tags?.length : p.oa_meta?.topics?.length));
-  const m = topicYearMatrix(eligible, { level, top });
+  const level = LEVEL_NOTE[params.level] ? params.level : 'topic', mode = params.mode || 'count', top = +(params.top || 15), q = params.q || '';
+  // denominators only include papers that carry at least one label at this level
+  const eligible = papers.filter((p) => labelsOf(p, level).length);
+  const m = topicYearMatrix(eligible, { level, top, filter: q });
   const values = m.rows.map((r) => r.counts.map((c, j) => (mode === 'share' ? (m.yearTotals[j] ? c / m.yearTotals[j] : 0) : c)));
   const fmt = (v) => (mode === 'share' ? `${Math.round(v * 100)}%` : v);
   const hm = heatmap({
@@ -121,14 +151,14 @@ function trendsTab(el, papers, params) {
     colEvery: m.years.length > 25 ? 2 : 1,
     tipFn: (i, j) => `<b>${esc(m.rows[i].label)}</b><br>${m.years[j]}: ${m.rows[i].counts[j]} of ${m.yearTotals[j]} library papers
       ${m.yearTotals[j] ? `(${Math.round((m.rows[i].counts[j] / m.yearTotals[j]) * 100)}%)` : ''}`,
-    onRow: level === 'topic' ? (i) => fieldTrend(el, papers, m, i) : null,
+    onRow: TOPIC_LEVELS.has(level) ? (i) => fieldTrend(el, papers, m, i) : null,
   });
   el.innerHTML = `<div class="card">
-    ${controls([select('level', LEVELS, level, 'Group by'), select('mode', [['count', 'Number of papers'], ['share', 'Share of that year\'s papers']], mode, 'Colour shows'), select('top', [[10, 'Top 10'], [15, 'Top 15'], [25, 'Top 25']], top, 'Rows')])}
+    ${controls([select('level', LEVELS, level, 'Group by'), filterBox(q), select('mode', [['count', 'Number of papers'], ['share', 'Share of that year\'s papers']], mode, 'Colour shows'), select('top', [[10, 'Top 10'], [15, 'Top 15'], [25, 'Top 25'], [40, 'Top 40']], top, 'Rows')])}
     <h2>${LEVELS.find((l) => l[0] === level)[1]} × publication year</h2>
-    <p class="muted small">Each paper counts once, under its primary OpenAlex ${level === 'tag' ? 'tag (all lab tags)' : level}. Rows are ordered by mean publication year, oldest first, so the chart reads as a timeline.
+    <p class="muted small">${LEVEL_NOTE[level]} ${eligible.length} papers have labels at this level. Rows are ordered by mean publication year, oldest first, so the chart reads as a timeline.
       ${mode === 'count' ? 'Raw counts rise with how much the lab collected that year; switch to “share” to compare years fairly.' : ''}
-      ${level === 'topic' ? '<b>Click a topic name</b> to compare its trend in the library with the whole literature.' : ''}</p>
+      ${TOPIC_LEVELS.has(level) ? '<b>Click a topic name</b> to compare its trend in the library with the whole literature.' : ''}</p>
     ${m.rows.length ? hm.html : '<p class="muted">No papers with years and topics.</p>'}
     ${tableView(['', ...m.years], m.rows.map((r) => [r.label, ...r.counts]))}
     <div id="field-trend"></div></div>`;
@@ -205,22 +235,26 @@ function bindLine(box) {
 
 // ================================================================ 2. geography
 function geoTab(el, papers, params) {
-  const by = params.by || 'country', level = params.level === 'tag' ? 'field' : params.level || 'field';
-  const m = groupTopicMatrix(papers, { by, level, topRows: by === 'country' ? 15 : 20, topCols: 12 });
-  const rowName = (r) => (by === 'country' ? `${regionName(r.key)}` : r.label);
+  const by = params.by || 'country', level = LEVEL_NOTE[params.level] ? params.level : 'topic', q = params.q || '';
+  const nGroups = +(params.groups || 15), nLabels = +(params.top || 20);
+  const m = groupTopicMatrix(papers, { by, level, topRows: nGroups, topCols: nLabels, filter: q });
+  const gName = (g) => (by === 'country' ? `${regionName(g.key)}` : g.label);
+  // labels (long) as rows, countries/institutions (short) as columns
+  const values = m.cols.map((_, j) => m.rows.map((_, i) => m.values[i][j]));
   const hm = heatmap({
-    rows: m.rows, cols: m.cols, values: m.values, rowLabel: (r) => `${rowName(r)} (${r.total})`,
-    tipFn: (i, j) => `<b>${esc(rowName(m.rows[i]))}</b> × <b>${esc(m.cols[j].label)}</b><br>${m.values[i][j]} papers with ≥1 author there
-      <br><span class="muted">${Math.round((m.values[i][j] / m.rows[i].total) * 100)}% of this ${by}'s ${m.rows[i].total} library papers</span>`,
+    rows: m.cols, cols: m.rows, values, rowLabel: (l) => `${l.label} (${l.total})`, colLabel: (g) => `${gName(g)} (${g.total})`,
+    tipFn: (i, j) => `<b>${esc(m.cols[i].label)}</b> × <b>${esc(gName(m.rows[j]))}</b><br>${values[i][j]} papers with ≥1 author there
+      <br><span class="muted">${Math.round((values[i][j] / m.rows[j].total) * 100)}% of this ${by}'s ${m.rows[j].total} library papers</span>`,
   });
   el.innerHTML = `<div class="card">
-    ${controls([select('by', [['country', 'Country'], ['institution', 'Institution']], by, 'Rows'), select('level', LEVELS.filter((l) => l[0] !== 'tag'), level, 'Columns')])}
+    ${controls([select('level', LEVELS, level, 'Rows'), filterBox(q), select('top', [[10, 'Top 10'], [20, 'Top 20'], [30, 'Top 30'], [50, 'Top 50']], nLabels, 'How many rows'),
+      select('by', [['country', 'Country'], ['institution', 'Institution']], by, 'Columns'), select('groups', [[10, 'Top 10'], [15, 'Top 15'], [25, 'Top 25']], nGroups, 'How many columns')])}
     <h2>Research topics by ${by}</h2>
-    <p class="muted small">Whole counting: a paper counts once for every distinct ${by} among its authors' affiliations, so row totals add up to more than ${m.nPapers} papers.
-      Rows are the ${m.rows.length} ${by === 'country' ? 'countries' : 'institutions'} most represented in the library; columns are the primary OpenAlex ${level}s.
-      For consortium papers only the first 20 and last 10 authors are stored.</p>
+    <p class="muted small">${LEVEL_NOTE[level]} Whole counting: a paper counts once for every distinct ${by} among its authors' affiliations, so column totals add up to more than ${m.nPapers} papers.
+      Columns are the ${m.rows.length} ${by === 'country' ? 'countries' : 'institutions'} most represented in the library.
+      For consortium papers only the first 20 and last 10 authors are stored. Hover a cell for counts; hover a label for its full name.</p>
     ${m.rows.length ? hm.html : '<p class="muted">No affiliation data yet.</p>'}
-    ${tableView([by, 'papers', ...m.cols.map((c) => c.label)], m.rows.map((r, i) => [rowName(r), r.total, ...m.values[i]]))}
+    ${tableView(['', 'papers', ...m.rows.map(gName)], m.cols.map((c, i) => [c.label, c.total, ...values[i]]))}
   </div>`;
   hm.bind(el);
   bindControls(el, 'geo', params);

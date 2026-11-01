@@ -47,6 +47,7 @@ const oaTopic = (id, name, sub, field) => ({ id: `https://openalex.org/${id}`, d
 const OAW = {
   '10.1000/a': { id: 'https://openalex.org/W1', doi: 'https://doi.org/10.1000/a', ids: {}, cited_by_count: 10, publication_year: 2021,
     topics: [oaTopic('T1', 'Cancer Genomics', 'Oncology', 'Medicine')], related_works: ['https://openalex.org/W80'],
+    keywords: [{ display_name: 'PARP inhibitor', score: 0.7 }], mesh: [{ descriptor_name: 'Poly(ADP-ribose) Polymerase Inhibitors', is_major_topic: true }],
     authorships: [oaAuth('A1', 'Ann Smith', 'Cambridge', 'GB'), oaAuth('A2', 'Bo Li', 'Cambridge', 'GB'), oaAuth('A3', 'Cy Doe', 'MIT', 'US')],
     referenced_works: ['https://openalex.org/W2', 'https://openalex.org/W7', 'https://openalex.org/W8', 'https://openalex.org/W9'] },
   '10.1000/b': { id: 'https://openalex.org/W2', doi: 'https://doi.org/10.1000/b', ids: {}, cited_by_count: 3, publication_year: 2024,
@@ -234,6 +235,15 @@ try {
   await page.waitForSelector('svg.linechart circle.pt.c2');
   ok('insights: topic × year heatmap, tooltip, library-vs-literature trend');
   await shot('insights-trends');
+
+  await go('#/insights?tab=trends&level=keyword');
+  await page.waitForSelector('svg.heatmap text:has-text("PARP inhibitor")');
+  await go('#/insights?tab=trends&level=mesh_all');
+  await page.fill('.viz-controls [name=q]', 'polymerase');
+  await page.press('.viz-controls [name=q]', 'Enter');
+  await page.waitForFunction(() => location.hash.includes('q=polymerase'));
+  await page.waitForSelector('svg.heatmap text:has-text("Poly(ADP-ribose)")');
+  ok('insights: keyword / MeSH levels and label filter');
 
   await go('#/insights?tab=geo');
   await page.waitForSelector('svg.heatmap text:has-text("United Kingdom")');

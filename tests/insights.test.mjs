@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { topicYearMatrix, groupTopicMatrix, louvain, modularity, collaborationGroups, frequentlyCited, frequentlyRelated, rankCiting } from '../site/js/insights-data.js';
+import { labelsOf, labelFilter, topicYearMatrix, groupTopicMatrix, louvain, modularity, collaborationGroups, frequentlyCited, frequentlyRelated, rankCiting } from '../site/js/insights-data.js';
 import { oaRecord } from '../site/js/links.js';
 
 const T = (name, subfield, field) => ({ id: 'T' + name, name, subfield, field });
@@ -81,4 +81,20 @@ test('oaRecord compacts OpenAlex work', () => {
   assert.equal(r.oa_meta.authors.at(-1).id, 'A99');            // last author (PI) kept
   assert.equal(r.oa_meta.n_authors, 100);
   assert.deepEqual(r.oa_meta.topics[0], { id: 'T5', name: 'X', score: 0.9, subfield: 'S', field: 'F', domain: 'D' });
+});
+
+test('fine-grained label levels and filter', () => {
+  const p = { tags: ['parp'], oa_meta: {
+    topics: [T('DNA repair', 'Oncology', 'Medicine'), T('PARP inhibitors', 'Oncology', 'Medicine')],
+    keywords: [{ name: 'Olaparib', score: 0.6 }, { name: 'BRCA1', score: 0.4 }],
+    mesh: [{ name: 'Humans', major: false }, { name: 'Poly(ADP-ribose) Polymerase Inhibitors', major: true }] } };
+  assert.deepEqual(labelsOf(p, 'topic'), ['DNA repair']);
+  assert.deepEqual(labelsOf(p, 'topic_all'), ['DNA repair', 'PARP inhibitors']);
+  assert.deepEqual(labelsOf(p, 'keyword'), ['Olaparib', 'BRCA1']);
+  assert.deepEqual(labelsOf(p, 'mesh'), ['Poly(ADP-ribose) Polymerase Inhibitors']);
+  assert.equal(labelsOf(p, 'mesh_all').length, 2);
+  const keep = labelFilter('parp, brca');
+  assert.deepEqual(labelsOf(p, 'topic_all').filter(keep), ['PARP inhibitors']);
+  const m = topicYearMatrix([{ ...p, oa_meta: { ...p.oa_meta, year: 2020 } }], { level: 'keyword', filter: 'brca' });
+  assert.deepEqual(m.rows.map((r) => r.label), ['BRCA1']);
 });

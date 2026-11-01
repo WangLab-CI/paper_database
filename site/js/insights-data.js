@@ -7,11 +7,23 @@ const yearOf = (p) => p.oa_meta?.year ?? p.year ?? null;
 //   level: 'topic' | 'subfield' | 'field' | 'tag'. Primary topic only for OpenAlex levels
 //   (fractional assignment across 3 topics would blur trends; primary topic is OpenAlex's best match).
 export function labelsOf(p, level) {
+  const m = p.oa_meta || {};
   if (level === 'tag') return [...new Set(p.tags || [])];
-  const t = p.oa_meta?.topics?.[0];
+  if (level === 'topic_all') return [...new Set((m.topics || []).map((t) => t.name))];
+  if (level === 'keyword') return [...new Set((m.keywords || []).map((k) => k.name))];
+  if (level === 'mesh') return [...new Set((m.mesh || []).filter((x) => x.major).map((x) => x.name))];
+  if (level === 'mesh_all') return [...new Set((m.mesh || []).map((x) => x.name))];
+  const t = m.topics?.[0];
   if (!t) return [];
   return [level === 'topic' ? t.name : t[level]].filter(Boolean);
 }
+
+// "parp, brca" → keep labels containing any of the terms (case-insensitive)
+export function labelFilter(text) {
+  const terms = String(text || '').toLowerCase().split(/[,;]/).map((t) => t.trim()).filter(Boolean);
+  return terms.length ? (l) => terms.some((t) => l.toLowerCase().includes(t)) : () => true;
+}
+const labelsFiltered = (p, level, keep) => labelsOf(p, level).filter(keep);
 
 export function topicIdOf(papers, name) {
   for (const p of papers) for (const t of p.oa_meta?.topics || []) if (t.name === name) return t.id;
@@ -19,7 +31,8 @@ export function topicIdOf(papers, name) {
 }
 
 // Topic × year counts. Returns { years, rows:[{label, total, counts:[...]}], yearTotals }
-export function topicYearMatrix(papers, { level = 'subfield', top = 15, from = null, to = null } = {}) {
+export function topicYearMatrix(papers, { level = 'subfield', top = 15, from = null, to = null, filter = '' } = {}) {
+  const keep = labelFilter(filter);
   const ps = papers.filter((p) => yearOf(p) && (!from || yearOf(p) >= from) && (!to || yearOf(p) <= to));
   if (!ps.length) return { years: [], rows: [], yearTotals: [] };
   const ys = ps.map(yearOf);
@@ -27,7 +40,7 @@ export function topicYearMatrix(papers, { level = 'subfield', top = 15, from = n
   const years = Array.from({ length: y1 - y0 + 1 }, (_, i) => y0 + i);
   const yearTotals = years.map((y) => ps.filter((p) => yearOf(p) === y).length);
   const byLabel = new Map();
-  for (const p of ps) for (const l of labelsOf(p, level)) {
+  for (const p of ps) for (const l of labelsFiltered(p, level, keep)) {
     const r = byLabel.get(l) || byLabel.set(l, { label: l, total: 0, counts: years.map(() => 0) }).get(l);
     r.total++; r.counts[yearOf(p) - y0]++;
   }
@@ -40,11 +53,12 @@ export function topicYearMatrix(papers, { level = 'subfield', top = 15, from = n
 
 // Group × topic counts with whole counting: a paper counts once for every distinct
 // country (or institution) among its authors.
-export function groupTopicMatrix(papers, { by = 'country', level = 'field', topRows = 15, topCols = 10 } = {}) {
+export function groupTopicMatrix(papers, { by = 'country', level = 'field', topRows = 15, topCols = 10, filter = '' } = {}) {
+  const keep = labelFilter(filter);
   const cell = new Map(), rowTot = new Map(), colTot = new Map(), names = new Map();
   let nPapers = 0;
   for (const p of papers) {
-    const labels = labelsOf(p, level);
+    const labels = labelsFiltered(p, level, keep);
     if (!labels.length || !p.oa_meta?.authors?.length) continue;
     const groups = new Set();
     for (const a of p.oa_meta.authors) for (const i of a.inst || []) {

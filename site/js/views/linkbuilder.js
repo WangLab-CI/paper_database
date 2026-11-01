@@ -2,13 +2,13 @@
 // citation / shared-reference / text-similarity links. Manual links are never touched.
 import { sb, check, fetchAll } from '../db.js';
 import { esc, toast, fail } from '../util.js';
-import { fetchOpenAlex, computeLinks } from '../links.js';
+import { fetchOpenAlex, computeLinks, OA_META_VERSION } from '../links.js';
 
 const AUTO = ['cites', 'coupled', 'similar'];
 
 // Needs an OpenAlex lookup: never checked, or checked before author/topic metadata was stored.
 export const needsEnrichment = (p, refresh = false) =>
-  (p.doi || p.pmid) && (refresh || !p.enriched_at || (p.openalex_id && !p.oa_meta));
+  (p.doi || p.pmid) && (refresh || !p.enriched_at || (p.openalex_id && (p.oa_meta?.v || 1) < OA_META_VERSION));
 
 // Look papers up in OpenAlex and save the results. Returns the merged paper list.
 export async function enrichPapers(papers, { refresh = false, topicTags = false } = {}, onProgress = () => {}) {

@@ -225,6 +225,8 @@ del { background: var(--del); }
 .viz-controls { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 6px; }
 .viz-controls label { margin: 0; font-size: .85em; color: var(--muted); }
 .viz-controls select { width: auto; display: block; }
+.viz-controls input { display: block; margin-top: 4px; }
+svg.heatmap .hm-cl { fill: var(--fg); font-size: 11px; }
 .hm-wrap { overflow-x: auto; }
 svg.heatmap text, svg.linechart text { fill: var(--muted); font-size: 11px; }
 svg.heatmap .hm-rl { fill: var(--fg); font-size: 12px; }

@@ -6,7 +6,8 @@
 import { normalizeDoi } from './util.js';
 
 const OA = 'https://api.openalex.org/works';
-const OA_SELECT = 'id,doi,ids,referenced_works,cited_by_count,topics,authorships,publication_year,related_works';
+const OA_SELECT = 'id,doi,ids,referenced_works,cited_by_count,topics,authorships,publication_year,related_works,keywords,mesh';
+export const OA_META_VERSION = 2;   // bump when oa_meta gains fields, so papers are re-fetched
 const shortOa = (u) => (u ? String(u).replace('https://openalex.org/', '') : null);
 
 async function oaFilter(key, values) {
@@ -34,7 +35,11 @@ export function oaRecord(w) {
     cited_by_count: w.cited_by_count ?? null,
     oa_topics: (w.topics || []).slice(0, 3).map((t) => t.display_name),
     oa_meta: {
+      v: OA_META_VERSION,
       year: w.publication_year ?? null,
+      keywords: (w.keywords || []).map((k) => ({ name: k.display_name, score: k.score })),
+      mesh: [...new Map((w.mesh || []).map((m) => [m.descriptor_name, m])).values()]
+        .map((m) => ({ name: m.descriptor_name, major: !!m.is_major_topic })),
       n_authors: (w.authorships || []).length,
       topics: (w.topics || []).slice(0, 3).map((t) => ({
         id: shortOa(t.id), name: t.display_name, score: t.score,
