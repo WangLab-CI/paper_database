@@ -48,14 +48,41 @@ function fromEpmc(r) {
   };
 }
 
+function fromBiorxiv(v, server) {
+  return {
+    title: (v.title || '').trim(), authors: (v.authors || '').split(/;\s*/).map((a) => a.trim()).filter(Boolean).join('; ') || null,
+    journal: server === 'medrxiv' ? 'medRxiv' : 'bioRxiv', year: v.date ? +v.date.slice(0, 4) : null, abstract: v.abstract || null,
+    doi: normalizeDoi(v.doi), url: `https://www.${server}.org/content/${v.doi}v${v.version || 1}`,
+    pdf_url: `https://www.${server}.org/content/${v.doi}v${v.version || 1}.full.pdf`, entry_type: 'misc', pmid: null,
+    tags: v.category ? [String(v.category).toLowerCase()] : [],
+  };
+}
+
 async function epmcQuery(query, pageSize = 1) {
   const url = `${EPMC}?query=${encodeURIComponent(query)}&resultType=core&format=json&pageSize=${pageSize}`;
   const j = await getJSON(url);
   return j.resultList?.result || [];
 }
 
+// Crossref first; preprint DOIs can take days to reach Crossref, so fall back to
+// Europe PMC (indexes bioRxiv/medRxiv) and then the bioRxiv/medRxiv API.
 export async function fetchByDoi(doi) {
-  const j = await getJSON(`https://api.crossref.org/works/${encodeURIComponent(doi)}`);
+  let j;
+  try { j = await getJSON(`https://api.crossref.org/works/${encodeURIComponent(doi)}`); }
+  catch (crossrefErr) {
+    try {
+      const hit = (await epmcQuery(`DOI:"${doi}"`, 3)).find((h) => normalizeDoi(h.doi) === doi);
+      if (hit) return { ...fromEpmc(hit), doi, entry_type: hit.source === 'PPR' ? 'misc' : 'article' };
+    } catch { /* next */ }
+    for (const server of ['biorxiv', 'medrxiv']) {
+      try {
+        const b = await getJSON(`https://api.biorxiv.org/details/${server}/${doi}`);
+        const v = (b.collection || []).at(-1);          // latest version
+        if (v) return fromBiorxiv(v, server);
+      } catch { /* next */ }
+    }
+    throw crossrefErr;
+  }
   const m = j.message;
   const year = (m.issued?.['date-parts']?.[0]?.[0]) || (m.published?.['date-parts']?.[0]?.[0]) || null;
   const rec = {

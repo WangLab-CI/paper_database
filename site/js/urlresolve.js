@@ -10,7 +10,8 @@ export function cleanDoi(raw) {
   let d = decodeURIComponent(String(raw || '')).split(/[?#\s]/)[0];
   for (let i = 0; i < 4; i++) d = d.replace(DOI_TAIL, '').replace(/\.(pdf|full|abstract)$/i, '');
   d = d.replace(/[.,;)\]]+$/, '');
-  if (/^10\.1101\//.test(d)) d = d.replace(/v\d+$/i, '');                  // bioRxiv / medRxiv version suffix
+  // bioRxiv / medRxiv version suffix (old prefix 10.1101, newer prefixes such as 10.64898): DOI is date-based
+  if (/^10\.1101\//.test(d) || /^10\.\d{4,9}\/\d{4}\.\d{2}\.\d{2}\.\d+v\d+$/i.test(d)) d = d.replace(/v\d+$/i, '');
   return /^10\.\d{4,9}\/\S+$/.test(d) ? d.toLowerCase() : null;
 }
 
@@ -28,7 +29,7 @@ export function parseArticleUrl(input) {
   if ((m = full.match(/\b(PMC\d+)\b/i)) && /ncbi|europepmc|pmc/.test(host)) return { type: 'pmcid', id: m[1].toUpperCase() };
   if (host.endsWith('europepmc.org') && (m = path.match(/\/(?:article|abstract)\/(?:MED|med)\/(\d+)/))) return { type: 'pmid', id: m[1] };
   if (host.endsWith('arxiv.org') && (m = path.match(/\/(?:abs|pdf|html)\/(\d{4}\.\d{4,5})/))) return { type: 'arxiv', id: m[1] };
-  if (/(^|\.)(biorxiv|medrxiv)\.org$/.test(host) && (m = path.match(/(10\.1101\/[\d.]+)/))) { const d = cleanDoi(m[1]); if (d) return { type: 'doi', id: d }; }
+  if (/(^|\.)(biorxiv|medrxiv)\.org$/.test(host) && (m = path.match(/(10\.\d{4,9}\/[\d.]+)/))) { const d = cleanDoi(m[1]); if (d) return { type: 'doi', id: d }; }
   if (host.endsWith('nature.com') && (m = path.match(/\/articles\/([a-z0-9.-]+?)(?:\.pdf)?$/i))) return { type: 'doi', id: `10.1038/${m[1].toLowerCase()}` };
   // Elsevier (ScienceDirect, Cell Press, Lancet): PII
   if ((m = path.match(/\/pii\/([S\dX()\-]{10,})/i)) || (m = path.match(/\/(?:fulltext|pdf|abstract|pdfExtended)\/(S[\dX()\-]{10,})/i))

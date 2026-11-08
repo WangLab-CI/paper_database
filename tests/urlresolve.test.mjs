@@ -8,6 +8,9 @@ const cases = [
   ['https://www.nature.com/articles/s41588-023-01234-5.pdf', 'doi', '10.1038/s41588-023-01234-5'],
   ['https://www.biorxiv.org/content/10.1101/2024.01.15.575678v2.full', 'doi', '10.1101/2024.01.15.575678'],
   ['https://www.medrxiv.org/content/10.1101/2023.11.02.23297935v1.full-text', 'doi', '10.1101/2023.11.02.23297935'],
+  ['https://www.biorxiv.org/content/10.64898/2026.10.28.762523v1', 'doi', '10.64898/2026.10.28.762523'],
+  ['https://www.biorxiv.org/content/10.64898/2026.10.28.762523v3.full.pdf', 'doi', '10.64898/2026.10.28.762523'],
+  ['https://doi.org/10.64898/2026.10.28.762523v1', 'doi', '10.64898/2026.10.28.762523'],
   ['https://www.science.org/doi/10.1126/science.adf1234', 'doi', '10.1126/science.adf1234'],
   ['https://www.pnas.org/doi/full/10.1073/pnas.2301234120', 'doi', '10.1073/pnas.2301234120'],
   ['https://onlinelibrary.wiley.com/doi/epdf/10.1002/ijc.34567', 'doi', '10.1002/ijc.34567'],
@@ -62,5 +65,28 @@ test('resolve chain: DOI in link, then page reader, then candidates', async () =
     const noFn = { functions: { invoke: async () => ({ data: null, error: new Error('Function not found') }) } };
     const c = await resolveUrl('https://academic.oup.com/nar/article/52/1/1/2/telomere-length-dynamics-in-cancer', { fetchers, sb: noFn });
     assert.equal(c.candidates[0].doi, '10.1/x');
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('preprint DOI lookup falls back when Crossref does not know it yet', async () => {
+  const { fetchByDoi } = await import('../site/js/metadata.js');
+  const realFetch = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async (url) => {
+    seen.push(new URL(url).host);
+    if (url.includes('crossref')) return { ok: false, status: 404, json: async () => ({}) };
+    if (url.includes('europepmc')) return { ok: true, json: async () => ({ resultList: { result: [] } }) };
+    return { ok: true, json: async () => ({ collection: [
+      { doi: '10.64898/2026.10.28.762523', title: 'v1 title', authors: 'Li, X.; Wang, G.', date: '2026-10-28', version: '1', category: 'Cancer Biology', abstract: 'A' },
+      { doi: '10.64898/2026.10.28.762523', title: 'Telomere crisis preprint', authors: 'Li, X.; Wang, G.', date: '2026-11-02', version: '2', category: 'Cancer Biology', abstract: 'B' }] }) };
+  };
+  try {
+    const r = await fetchByDoi('10.64898/2026.10.28.762523');
+    assert.deepEqual(seen, ['api.crossref.org', 'www.ebi.ac.uk', 'api.biorxiv.org']);
+    assert.equal(r.title, 'Telomere crisis preprint');                  // latest version
+    assert.equal(r.journal, 'bioRxiv');
+    assert.equal(r.authors, 'Li, X.; Wang, G.');
+    assert.equal(r.url, 'https://www.biorxiv.org/content/10.64898/2026.10.28.762523v2');
+    assert.deepEqual(r.tags, ['cancer biology']);
   } finally { globalThis.fetch = realFetch; }
 });
