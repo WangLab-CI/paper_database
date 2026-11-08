@@ -445,3 +445,6 @@ revoke insert, update, delete on public.project_versions from authenticated;
 -- ---------------------------------------------------------------------
 -- insert into public.allowlist (email, role) values ('pi@example.ac.uk', 'admin')
 --   on conflict (email) do update set role = 'admin';
+
+-- Tell the API layer to pick up new tables/columns immediately
+notify pgrst, 'reload schema';

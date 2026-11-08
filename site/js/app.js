@@ -51,7 +51,16 @@ async function route() {
       await view(app, { id: m[1], params, isCurrent: () => seq === renderSeq });
     } catch (e) {
       fail(e, 'Page failed to load');
-      app.innerHTML = `<div class="card error-card"><h3>Something went wrong</h3><pre>${esc(e.message || e)}</pre></div>`;
+      const msg = String(e?.message || e);
+      const outdated = /(column|relation|table) [\w."]+ does not exist|Could not find the '?[\w.]+'? (column|table)|schema cache/i.test(msg);
+      app.innerHTML = outdated
+        ? `<div class="card error-card"><h3>The database needs updating</h3>
+            <p>The portal was updated and uses database changes that have not been applied yet.</p>
+            <ol><li>Copy the latest <a target="_blank" rel="noopener" href="https://github.com/WangLab-CI/paper_database/blob/main/supabase/schema.sql">supabase/schema.sql</a>.</li>
+              <li>Paste it into the Supabase SQL Editor and click <b>Run query</b> (safe: it only adds what is missing).</li>
+              <li>Reload this page.</li></ol>
+            <p class="muted small">Ask a portal admin if you don't have access to Supabase. Details: <code>${esc(msg)}</code></p></div>`
+        : `<div class="card error-card"><h3>Something went wrong</h3><pre>${esc(msg)}</pre></div>`;
     }
     window.scrollTo(0, 0);
     return;
