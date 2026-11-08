@@ -17,6 +17,8 @@ A members-only web portal where the lab keeps its **paper library**, develops **
 | **Insights** | Four focused views built from OpenAlex metadata. **Topic trends:** heatmap of primary topic/subfield/field (or lab tag) × year, as counts or share of each year; click a topic to compare the library's trend with the whole literature (both indexed to their own mean = 100). **Countries & institutes:** heatmap with whole counting by affiliation. **Collaborative groups:** co-authorship network with Louvain communities and group summaries; papers with >30 authors are excluded from the links. **Missing works:** works cited by ≥2 library papers, recent works citing ≥2 library papers, and OpenAlex related works, each with one-click Add. |
 | **Paper suggestions for projects** | Each project's Papers tab ranks library papers by word overlap between the project's text and each paper's title and abstract (TF-IDF), project tags found in the paper's tags, OpenAlex topics, keywords or MeSH terms, and citation or shared-reference links to papers already linked to the project. The reasons are shown for each suggestion; one-click Link or Dismiss. New projects open on this tab. |
 | **Technologies** (Tech tab) | Commercial platforms, kits and software, added by name or product-page link, with vendor, category, aliases, linked projects and notes. **Literature:** Europe PMC full-text search for the product name, with recent papers, most-cited papers and a papers-per-year chart; Check now, plus the daily job. **Technical updates:** the daily job watches the product page and shows the passages that appeared, and reads the vendor's news/RSS feed, auto-detected where possible. Lab members can add notes. |
+| **Papers of direct relevance** | A curated shortlist at the top of each project's Overview, each with relation and a "why it matters" note. Add by pasting a link, DOI or PMID, pick from the library, or ☆ a paper on the Papers tab. |
+| **Add by web link** | Paste any article URL (Import page or a project's direct-relevance box). The DOI/PMID is read from the link itself, from publisher patterns (Nature IDs, Elsevier PII via Crossref), from the page's citation tags via the optional `resolve-url` function, or finally from a Crossref title search where you pick the match. |
 | **Graph** | An interactive network of papers, projects, concepts (tags) and people. Filter by node type, hide rarely used concepts, double-click a node to show only its neighbourhood (1–4 hops), and click through to a paper or project. |
 | **Admin** | Manage the allowlist, approve people who are waiting, and set roles (member/admin). |
 
@@ -109,3 +111,13 @@ It writes to Supabase with the project's **secret** key. That key bypasses Row L
 3. Actions tab → **Track technologies** → **Run workflow** to test it. The log lists each product and what was found.
 
 Without the secret, the job skips itself with a warning. Literature tracking still works from the portal's **Check now** button. Some vendor sites block automated requests; the product page then shows the error, and literature tracking is unaffected.
+
+## Optional: page reader for article links (`resolve-url`)
+
+Most article links are resolved in the browser. Links without a DOI in the URL (e.g. Oxford Academic, some society journals) need the publisher's page to be read, and browsers block that. Deploy the small Edge Function in `supabase/functions/resolve-url/index.ts` to handle them:
+
+1. Supabase → **Edge Functions → Deploy a new function → Via Editor**.
+2. Name it `resolve-url` exactly, replace the sample code with the contents of `supabase/functions/resolve-url/index.ts`, and click **Deploy**.
+3. Leave **Verify JWT** on. The function also checks that the caller is an approved lab member, and refuses internal addresses.
+
+Without it, such links fall back to a Crossref title search, where you choose the right paper. Some publishers block automated requests; those links also fall back to the title search.

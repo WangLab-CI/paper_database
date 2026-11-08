@@ -6,6 +6,7 @@ import { diffWords } from '../diff.js';
 import { fetchAll } from '../db.js';
 import { suggestPapers } from '../suggest.js';
 import { techForProject } from './products.js';
+import { resolveInput, findOrCreatePaper } from './addbylink.js';
 
 // ================================================================== board
 export async function projectsView(root, { params }) {
@@ -88,7 +89,7 @@ export async function projectView(root, { id, params }) {
   const tab = params.tab || 'overview';
   const [p, links, updates, versions, tech] = await Promise.all([
     sb.from('projects').select('*').eq('id', id).maybeSingle().then(check),
-    sb.from('project_papers').select('relation,note,created_at,added_by,paper:papers(id,title,authors,year,journal,tags)').eq('project_id', id).order('created_at').then(check),
+    sb.from('project_papers').select('relation,note,direct,created_at,added_by,paper:papers(id,title,authors,year,journal,tags,doi)').eq('project_id', id).order('created_at').then(check),
     sb.from('project_updates').select('*').eq('project_id', id).order('created_at', { ascending: false }).then(check),
     sb.from('project_versions').select('id,version,change_note,edited_by,created_at').eq('project_id', id).order('version', { ascending: false }).then(check),
     techForProject(id).catch(() => []),
@@ -121,14 +122,38 @@ export async function projectView(root, { id, params }) {
   };
 
   const el = root.querySelector('#tab');
-  if (tab === 'overview') overviewTab(el, p, reload, canDelete);
+  if (tab === 'overview') overviewTab(el, p, links, reload, canDelete);
   else if (tab === 'papers') papersTab(el, p, links, reload);
   else if (tab === 'timeline') timelineTab(el, p, updates, versions, reload);
   else if (tab === 'history') historyTab(el, p, versions);
 }
 
-function overviewTab(el, p, reload, canDelete) {
+function overviewTab(el, p, links, reload, canDelete) {
+  const direct = links.filter((l) => l.direct && l.paper);
   el.innerHTML = `
+    <section class="card direct-card">
+      <div class="row between wrap"><h2>★ Papers of direct relevance <small class="muted">${direct.length}</small></h2>
+        <button class="small" id="dr-lib">+ From library</button></div>
+      <p class="muted small">The few papers this idea stands or falls on: the closest prior work, the key competing result, the method it depends on.
+        All other literature lives on the <a href="#/project/${p.id}?tab=papers">Papers</a> tab, where ☆ promotes a paper to this list.</p>
+      <form id="dr-add" class="row">
+        <input name="q" placeholder="Paste an article link, DOI or PMID to add it here" autocomplete="off">
+        <button class="primary">Add</button>
+      </form>
+      ${direct.length ? `<ol class="direct-list">${direct.map((l) => `
+        <li data-pid="${l.paper.id}">
+          <div class="row between wrap">
+            <div style="flex:1;min-width:260px">
+              <a href="#/paper/${l.paper.id}"><b>${esc(l.paper.title)}</b></a>
+              <div class="meta">${esc(authorsShort(l.paper.authors))} ${l.paper.year || ''} ${l.paper.journal ? '· <i>' + esc(l.paper.journal) + '</i>' : ''}
+                · <span class="rel rel-${l.relation}">${l.relation}</span></div>
+              <div class="why">${l.note ? esc(l.note) : '<span class="muted">Why is it directly relevant? (click ✎ to add)</span>'}</div>
+            </div>
+            <div class="row"><button class="ghost small dr-note" title="Edit relation and note">✎</button>
+              <button class="ghost small dr-unstar" title="Remove from this list (stays linked under Papers)">☆ remove</button></div>
+          </div>
+        </li>`).join('')}</ol>` : '<p class="muted">None yet.</p>'}
+    </section>
     <div class="card">
       <div class="row end"><button class="primary" id="edit">✎ Edit</button>${canDelete ? '<button class="danger ghost" id="del">Delete</button>' : ''}</div>
       ${PROJECT_FIELDS.map(([k, label]) => `
@@ -138,6 +163,52 @@ function overviewTab(el, p, reload, canDelete) {
   el.querySelector('#del')?.addEventListener('click', async () => {
     if (!(await confirmDialog(`Delete “${p.title}” including its full history? Consider setting status to “archived” instead.`))) return;
     try { check(await sb.from('projects').delete().eq('id', p.id)); location.hash = '#/projects'; } catch (err) { fail(err); }
+  });
+
+  const setDirect = (paperId, rel, note) => sb.from('project_papers')
+    .upsert({ project_id: p.id, paper_id: paperId, relation: rel, note: note || null, direct: true }, { onConflict: 'project_id,paper_id' }).then(check);
+  const linkOf = (pid) => links.find((l) => l.paper?.id === pid);
+  const directModal = (title, meta, paperId) => {
+    const cur = linkOf(paperId);
+    const m = modal('Papers of direct relevance', `<form>
+      <p><b>${esc(title)}</b>${meta ? `<br><span class="meta">${meta}</span>` : ''}</p>
+      <label>Relation<select name="relation">${RELATIONS.map((r) => `<option ${r === (cur?.relation || 'supports') ? 'selected' : ''}>${r}</option>`).join('')}</select></label>
+      <label>Why is it directly relevant?<input name="note" value="${esc(cur?.note || '')}" placeholder="e.g. same model and readout; shows the effect we propose is TERT-independent"></label>
+      <div class="row end"><button class="primary">Save</button></div></form>`);
+    m.el.querySelector('form').onsubmit = async (e) => {
+      e.preventDefault();
+      const d = formData(e.target);
+      try { await setDirect(paperId, d.relation, d.note); m.close(); reload('overview'); } catch (err) { fail(err, 'Save'); }
+    };
+  };
+
+  const f = el.querySelector('#dr-add');
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const q = f.q.value.trim();
+    if (!q) return;
+    const btn = f.querySelector('button'); btn.disabled = true; btn.textContent = 'Looking up…';
+    try {
+      const r = await resolveInput(q);
+      if (!r) return;
+      const paper = await findOrCreatePaper(r.rec);
+      toast(paper.existed ? 'Already in the library: linked' : 'Added to the library', 'ok');
+      f.q.value = '';
+      directModal(paper.title, `${esc(authorsShort(r.rec.authors))} ${r.rec.year || ''} · identified via ${esc(r.via)}`, paper.id);
+    } catch (err) { fail(err, 'Add'); }
+    finally { btn.disabled = false; btn.textContent = 'Add'; }
+  };
+  el.querySelector('#dr-lib').onclick = () => paperPicker(async (paperId) => {
+    const { data } = await sb.from('papers').select('title,authors,year').eq('id', paperId).single();
+    directModal(data?.title || 'Selected paper', data ? `${esc(authorsShort(data.authors))} ${data.year || ''}` : '', paperId);
+  }, new Set(direct.map((l) => l.paper.id)));
+  el.querySelectorAll('.direct-list li').forEach((li) => {
+    const pid = li.dataset.pid, l = linkOf(pid);
+    li.querySelector('.dr-note').onclick = () => directModal(l.paper.title, '', pid);
+    li.querySelector('.dr-unstar').onclick = async () => {
+      try { check(await sb.from('project_papers').update({ direct: false }).eq('project_id', p.id).eq('paper_id', pid)); reload('overview'); }
+      catch (err) { fail(err); }
+    };
   });
 }
 
@@ -187,6 +258,7 @@ function papersTab(el, p, links, reload) {
         <h3><span class="rel rel-${rel}">${rel}</span> <small>${ls.length}</small></h3>
         <ul class="list">${ls.map((l) => `
           <li data-pid="${l.paper.id}">
+            <button class="star ${l.direct ? 'on' : ''}" title="${l.direct ? 'Directly relevant (click to remove)' : 'Mark as directly relevant'}">${l.direct ? '★' : '☆'}</button>
             <a href="#/paper/${l.paper.id}">${esc(l.paper.title)}</a>
             <div class="meta">${esc(authorsShort(l.paper.authors))} ${l.paper.year || ''} ${l.paper.journal ? '· <i>' + esc(l.paper.journal) + '</i>' : ''}</div>
             ${l.note ? `<div class="linknote">${esc(l.note)}</div>` : ''}
@@ -203,12 +275,13 @@ function papersTab(el, p, links, reload) {
   el.querySelector('#add').onclick = () => paperPicker(async (paperId) => {
     const m = modal('How does this paper relate?', `<form>
       <label>Relation<select name="relation">${RELATIONS.map((r) => `<option>${r}</option>`).join('')}</select></label>
+      <label class="row"><input type="checkbox" name="direct"> ★ Directly relevant to this idea</label>
       <label>Note<input name="note" placeholder="e.g. shows the same effect in PDAC organoids"></label>
       <div class="row end"><button class="primary">Link</button></div></form>`);
     m.el.querySelector('form').onsubmit = async (e) => {
       e.preventDefault();
       const d = formData(e.target);
-      try { check(await sb.from('project_papers').insert({ project_id: p.id, paper_id: paperId, relation: d.relation, note: d.note || null })); m.close(); reload('papers'); }
+      try { check(await sb.from('project_papers').insert({ project_id: p.id, paper_id: paperId, relation: d.relation, note: d.note || null, direct: !!d.direct })); m.close(); reload('papers'); }
       catch (err) { fail(err, 'Link'); }
     };
   }, new Set(links.map((l) => l.paper?.id)));
@@ -221,6 +294,10 @@ function papersTab(el, p, links, reload) {
       const cur = links.find((l) => l.paper?.id === pid)?.note || '';
       const m = modal('Link note', `<form><textarea name="note" rows="3">${esc(cur)}</textarea><div class="row end"><button class="primary">Save</button></div></form>`);
       m.el.querySelector('form').onsubmit = async (e) => { e.preventDefault(); try { await upd(pid, { note: e.target.note.value || null }); m.close(); reload('papers'); } catch (err) { fail(err); } };
+    };
+    li.querySelector('.star').onclick = async () => {
+      const cur = links.find((l) => l.paper?.id === pid);
+      try { await upd(pid, { direct: !cur.direct }); reload('papers'); } catch (err) { fail(err); }
     };
     li.querySelector('.unlink').onclick = async () => {
       try { check(await sb.from('project_papers').delete().eq('project_id', p.id).eq('paper_id', pid)); reload('papers'); } catch (err) { fail(err); }
@@ -331,6 +408,7 @@ async function renderSuggestions(box, p, links, reload) {
             <div class="row">
               <span class="score" title="text ${x.parts.text} · tag hits ${x.parts.tags} · network links ${x.parts.network}">${x.score.toFixed(2)}</span>
               <select class="rel-pick">${RELATIONS.map((r) => `<option>${r}</option>`).join('')}</select>
+              <label class="row small" title="Add to Papers of direct relevance"><input type="checkbox" class="direct-pick">★</label>
               <button class="small primary link">Link</button>
               <button class="small ghost dismiss" title="Hide this suggestion (only for you, on this browser)">✕</button>
             </div>
@@ -342,7 +420,7 @@ async function renderSuggestions(box, p, links, reload) {
       li.querySelector('.link').onclick = async (e) => {
         e.target.disabled = true;
         try {
-          check(await sb.from('project_papers').insert({ project_id: p.id, paper_id: x.paper.id, relation: li.querySelector('.rel-pick').value,
+          check(await sb.from('project_papers').insert({ project_id: p.id, paper_id: x.paper.id, relation: li.querySelector('.rel-pick').value, direct: li.querySelector('.direct-pick').checked,
             note: `Suggested (${x.reasons[0] || 'score ' + x.score})`.slice(0, 300) }));
           toast('Linked', 'ok');
           reload('papers');

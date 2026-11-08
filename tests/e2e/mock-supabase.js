@@ -28,7 +28,7 @@ const DEFAULTS = {
   papers: () => ({ id: uuid(), tags: [], entry_type: 'article', added_by: ME, created_at: now(), updated_at: now() }),
   paper_notes: () => ({ id: uuid(), user_id: ME, body: '', rating: null, reading_status: 'to_read', created_at: now(), updated_at: now() }),
   projects: () => ({ id: uuid(), status: 'idea', summary: '', hypothesis: '', rationale: '', aims: '', open_questions: '', next_steps: '', tags: [], owner_id: ME, collaborators: [], version: 1, last_edited_by: ME, created_at: now(), updated_at: now() }),
-  project_papers: () => ({ relation: 'background', added_by: ME, created_at: now() }),
+  project_papers: () => ({ direct: false, relation: 'background', added_by: ME, created_at: now() }),
   project_updates: () => ({ id: uuid(), author_id: ME, created_at: now() }),
   allowlist: () => ({ role: 'member', created_at: now() }),
   products: () => ({ id: uuid(), aliases: [], tags: [], notes: '', created_by: ME, created_at: now(), updated_at: now() }),
@@ -179,6 +179,7 @@ export function createClient() {
   const signedOut = /error_code=/.test(location.hash);
   return {
     from: (t) => new Q(t),
+    functions: { invoke: async () => ({ data: null, error: new Error('Function not deployed') }) },
     auth: {
       onAuthStateChange(cb) { listener = cb; setTimeout(() => cb('INITIAL_SESSION', signedOut ? null : session), 0); return { data: { subscription: { unsubscribe() {} } } }; },
       signOut: async () => ({ error: null }),

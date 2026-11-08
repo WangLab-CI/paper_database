@@ -35,6 +35,8 @@ insert into project_updates(project_id, body) select id,'pilot worked' from proj
 do $$ begin
   assert (select version from projects where title='Idea 1')=2, 'version bumped once';
   assert (select count(*) from project_versions)=2, 'two snapshots';
+  update project_papers set direct = true;
+  assert (select bool_and(direct) from project_papers), 'direct flag settable by member';
   assert (select change_note from project_versions where version=2)='refined', 'note kept';
   assert (select snapshot->>'hypothesis' from project_versions where version=1)='H0', 'v1 snapshot';
   assert (select count(*) from profiles)=3, 'member sees all profiles';

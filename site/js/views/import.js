@@ -6,6 +6,7 @@ import { paperFormHtml, readPaperForm } from './papers.js';
 import { modal } from '../ui.js';
 import { planImport, mergePatch, FILLABLE } from '../importplan.js';
 import { renderLinkBuilder } from './linkbuilder.js';
+import { resolveInput } from './addbylink.js';
 
 export async function importView(root, { params }) {
   const tagNames = (await allTags()).map((t) => t.tag);
@@ -13,12 +14,12 @@ export async function importView(root, { params }) {
     <h1>Add papers</h1>
     <div class="grid-2">
       <section class="card">
-        <h2>By identifier</h2>
+        <h2>By identifier or link</h2>
         <form id="lookup" class="row">
-          <input name="id" value="${esc(params.id || '')}" placeholder="DOI, PMID, PMCID, arXiv ID or URL" autocomplete="off">
+          <input name="id" value="${esc(params.id || '')}" placeholder="DOI, PMID, arXiv ID, or any article web page link" autocomplete="off">
           <button class="primary">Look up</button>
         </form>
-        <p class="muted small">Metadata from Crossref, Europe PMC and DataCite. You can edit everything before saving.</p>
+        <p class="muted small">Metadata from Crossref, Europe PMC and DataCite. Links from journals, PubMed, PMC, bioRxiv, arXiv, ScienceDirect/Cell and Nature are recognised directly; other sites are read by the optional page-reader function (see README) or matched by title. You can edit everything before saving.</p>
         <div id="lookup-out"></div>
       </section>
       <section class="card">
@@ -50,11 +51,14 @@ export async function importView(root, { params }) {
     const val = lf.id.value.trim();
     if (!val) return;
     const id = parseIdentifier(val);
-    if (id?.type === 'query') { root.querySelector('#search [name=q]').value = val; root.querySelector('#search').requestSubmit(); return; }
+    const isLink = /^https?:\/\//i.test(val);
+    if (id?.type === 'query' && !isLink) { root.querySelector('#search [name=q]').value = val; root.querySelector('#search').requestSubmit(); return; }
     out.innerHTML = '<div class="loading">Fetching metadata…</div>';
     try {
-      const rec = await lookup(val);
-      showEditor(out, rec, tagNames);
+      const r = await resolveInput(val);
+      if (!r) { out.innerHTML = '<p class="muted">Cancelled. Paste the DOI or PMID instead, or enter details manually.</p>'; return; }
+      showEditor(out, r.rec, tagNames);
+      if (r.via !== 'identifier') out.insertAdjacentHTML('afterbegin', `<p class="muted small">Identified via ${esc(r.via)}. Please check the details.</p>`);
     } catch (err) {
       out.innerHTML = `<p class="error">Lookup failed: ${esc(err.message)}. You can enter details manually.</p><button id="manual">Enter manually</button>`;
       out.querySelector('#manual').onclick = () => showEditor(out, { doi: normalizeDoi(val) }, tagNames);
@@ -159,7 +163,8 @@ export async function importView(root, { params }) {
               if (r.abstract || (!r.doi && !r.pmid)) continue;
               try {
                 const [hit] = await searchLiterature(r.pmid ? `EXT_ID:${r.pmid} AND SRC:MED` : `DOI:"${r.doi}"`, 1);
-                if (hit) { r.abstract = hit.abstract; r.pmid = r.pmid || hit.pmid; }
+                const same = hit && (r.pmid ? String(hit.pmid) === String(r.pmid) : normalizeDoi(hit.doi) === r.doi);
+                if (same) { r.abstract = hit.abstract; r.pmid = r.pmid || hit.pmid; }
               } catch { /* skip */ }
             }
           }

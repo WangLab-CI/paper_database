@@ -66,10 +66,22 @@ await page.route('https://api.openalex.org/**', (route) => {
   else body = { results: Object.entries(OAW).filter(([d]) => u.includes(d)).map(([, w]) => w) };
   route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body) });
 });
-// Fake Crossref (DOI lookup when adding a tracked paper to the library)
-await page.route('https://api.crossref.org/**', (route) => route.fulfill({ status: 200, contentType: 'application/json',
-  headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ message: { DOI: '10.1038/s41586-026-0001', title: ['A Visium HD atlas of colorectal cancer'],
-    author: [{ family: 'Oliveira', given: 'M' }], 'container-title': ['Nature'], issued: { 'date-parts': [[2026]] }, type: 'journal-article' } }) }));
+// Fake Crossref: DOI lookup, Elsevier PII (alternative-id) and bibliographic search
+const CR = {
+  '10.1038/s41586-026-0001': ['A Visium HD atlas of colorectal cancer', 'Nature', 'Oliveira'],
+  '10.1093/nar/gkad999': ['Telomere length dynamics in human cancer', 'Nucleic Acids Research', 'Kim'],
+  '10.1016/j.cell.2024.01.012': ['ALT telomeres in paediatric glioma', 'Cell', 'Patel'],
+};
+const crWork = (doi) => ({ DOI: doi, title: [CR[doi][0]], author: [{ family: CR[doi][2], given: 'A' }], 'container-title': [CR[doi][1]],
+  issued: { 'date-parts': [[2024]] }, type: 'journal-article' });
+await page.route('https://api.crossref.org/**', (route) => {
+  const u = decodeURIComponent(route.request().url());
+  let body;
+  if (u.includes('alternative-id:S0092867424001234')) body = { message: { items: [{ DOI: '10.1016/j.cell.2024.01.012' }] } };
+  else if (u.includes('query.bibliographic=')) body = { message: { items: [crWork('10.1093/nar/gkad999')] } };
+  else { const doi = Object.keys(CR).find((d) => u.toLowerCase().includes(d)); body = doi ? { message: crWork(doi) } : null; }
+  route.fulfill({ status: body ? 200 : 404, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify(body || {}) });
+});
 // Fake Europe PMC (technology tracking)
 await page.route('https://www.ebi.ac.uk/europepmc/**', (route) => {
   const u = decodeURIComponent(route.request().url());
@@ -321,6 +333,45 @@ try {
   await go('#/tech');
   await page.waitForSelector('.tech-card:has-text("Visium HD")');
   ok('technology shown on project, home and list pages');
+
+  // ---- Papers of direct relevance + add by web link
+  await go('#/projects');
+  await page.click('.pcard a.title >> text=Organoid TP53 screen');
+  await page.waitForSelector('.direct-card:has-text("None yet")');
+  await page.fill('#dr-add [name=q]', 'https://www.nature.com/articles/s41586-026-0001');
+  await page.click('#dr-add button');
+  await page.waitForSelector('.modal:has-text("A Visium HD atlas")');
+  await page.fill('.modal [name=note]', 'Same spatial readout in a human tumour cohort');
+  await page.click('.modal button.primary');
+  await page.waitForSelector('.direct-list li:has-text("A Visium HD atlas") .why:has-text("Same spatial readout")');
+  // a link with no identifier: page reader not deployed → Crossref title search → choose
+  await page.fill('#dr-add [name=q]', 'https://academic.oup.com/nar/article/52/1/1/7654321/telomere-length-dynamics-in-human-cancer');
+  await page.click('#dr-add button');
+  await page.click('.modal a:has-text("Telomere length dynamics in human cancer")');
+  await page.waitForSelector('.modal:has-text("Why is it directly relevant")');
+  await page.click('.modal button.primary');
+  await page.waitForSelector('.direct-list li:has-text("Telomere length dynamics")');
+  ok('papers of direct relevance: add by Nature link and by unidentified link (title match)');
+  // promote from the Papers tab, then demote from Overview
+  await page.click('.tabs a:has-text("Papers")');
+  await page.click('li[data-pid]:has-text("Telomere crisis drives evolution") button.star');
+  await page.waitForSelector('li[data-pid]:has-text("Telomere crisis drives evolution") button.star.on');
+  await page.click('.tabs a:has-text("Overview")');
+  await page.waitForSelector('.direct-list li:has-text("Telomere crisis drives evolution")');
+  await page.click('.direct-list li:has-text("Telomere crisis") .dr-unstar');
+  await page.waitForFunction(() => !document.querySelector('.direct-list')?.innerText.includes('Telomere crisis'));
+  if ((await page.locator('.direct-list > li').count()) !== 2) throw new Error('direct list count');
+  await page.locator('.direct-card').scrollIntoViewIfNeeded();
+  await shot('direct');
+  ok('star / unstar between Papers tab and direct-relevance list');
+
+  // Import page: Cell (Elsevier PII) link → Crossref → editor
+  await go('#/import');
+  await page.fill('#lookup [name=id]', 'https://www.cell.com/cell/fulltext/S0092-8674(24)00123-4');
+  await page.click('#lookup button');
+  await page.waitForSelector('#lookup-out textarea[name=title]');
+  if (!(await page.inputValue('#lookup-out textarea[name=title]')).includes('ALT telomeres')) throw new Error('PII lookup');
+  ok('add literature by Cell/ScienceDirect link (PII → DOI)');
 
   // ---- Insights
   await go('#/insights?tab=trends&level=topic');

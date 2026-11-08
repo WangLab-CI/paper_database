@@ -191,6 +191,8 @@ create table if not exists public.project_papers (
   primary key (project_id, paper_id)
 );
 create index if not exists project_papers_paper_idx on public.project_papers (paper_id);
+-- 'Papers of direct relevance': a curated shortlist per project, shown on its Overview
+alter table public.project_papers add column if not exists direct boolean not null default false;
 
 -- Dated log entries (results, discussions, decisions) on a project.
 create table if not exists public.project_updates (

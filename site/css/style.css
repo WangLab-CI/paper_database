@@ -300,3 +300,13 @@ svg.barchart .bar-hit:hover + text, svg.barchart .bar-hit:hover { fill: rgba(127
 svg.barchart .grid { stroke: var(--grid); }
 svg.barchart text { fill: var(--muted); font-size: 11px; }
 p select, .card p select { width: auto; display: inline-block; padding: 1px 4px; }
+
+/* papers of direct relevance */
+.direct-card { border-left: 4px solid var(--cat-4, #eda100); }
+.direct-card h2 { margin: 0; }
+ol.direct-list { padding-left: 22px; margin: 12px 0 0; }
+ol.direct-list > li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+ol.direct-list > li:last-child { border-bottom: none; }
+ol.direct-list .why { margin-top: 3px; font-size: .92em; }
+button.star { background: none; border: none; padding: 0 4px 0 0; font-size: 1.1em; color: var(--muted); cursor: pointer; }
+button.star.on { color: #c98500; }

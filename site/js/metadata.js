@@ -3,6 +3,7 @@
 //   PMID  → Europe PMC
 //   arXiv → DataCite (arXiv DOIs 10.48550/arXiv.<id>)
 import { normalizeDoi } from './util.js';
+import { resolveUrl } from './urlresolve.js';
 
 const EPMC = 'https://www.ebi.ac.uk/europepmc/webservices/rest/search';
 
@@ -69,7 +70,8 @@ export async function fetchByDoi(doi) {
     pmid: null, pdf_url: null, tags: [],
   };
   try {
-    const [hit] = await epmcQuery(`DOI:"${doi}"`);
+    const hits = await epmcQuery(`DOI:"${doi}"`, 3);
+    const hit = hits.find((h) => normalizeDoi(h.doi) === rec.doi);   // only enrich from the exact same paper
     if (hit) {
       const e = fromEpmc(hit);
       rec.pmid = e.pmid;
@@ -121,6 +123,16 @@ export async function lookup(input) {
     case 'arxiv': return fetchByArxiv(id.id);
     default: throw new Error('Not an identifier — use “Search literature” instead');
   }
+}
+
+// Any input: DOI / PMID / PMCID / arXiv ID, or an article web page link.
+// Returns { rec, via } or { candidates, via } (when only a search could match the link).
+export async function lookupAny(input, { sb = null } = {}) {
+  const s = String(input || '').trim();
+  if (/^https?:\/\//i.test(s)) {
+    return resolveUrl(s, { sb, fetchers: { doi: fetchByDoi, pmid: fetchByPmid, pmcid: fetchByPmcid, arxiv: fetchByArxiv } });
+  }
+  return { rec: await lookup(s), via: 'identifier' };
 }
 
 // Free-text literature search (Europe PMC covers PubMed, PMC, bioRxiv/medRxiv preprints)

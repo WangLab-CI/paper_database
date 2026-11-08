@@ -104,7 +104,7 @@ export async function paperView(root, { id }) {
   const [paper, notes, links, projects, tags, related] = await Promise.all([
     sb.from('papers').select(PAPER_COLS + ',openalex_id,cited_by_count,oa_topics').eq('id', id).maybeSingle().then(check),
     sb.from('paper_notes').select('*').eq('paper_id', id).order('updated_at', { ascending: false }).then(check),
-    sb.from('project_papers').select('relation,note,project:projects(id,title,status)').eq('paper_id', id).then(check),
+    sb.from('project_papers').select('relation,note,direct,project:projects(id,title,status)').eq('paper_id', id).then(check),
     sb.from('projects').select('id,title,status').order('title').then(check),
     allTags(),
     relatedPapers(id),
@@ -160,7 +160,7 @@ export async function paperView(root, { id }) {
       <section class="card">
         <h2>Linked projects</h2>
         ${links.length ? `<ul class="list">${links.filter((l) => l.project).map((l) => `
-          <li><span class="rel rel-${l.relation}">${l.relation}</span> <a href="#/project/${l.project.id}">${esc(l.project.title)}</a>
+          <li>${l.direct ? '<span title="Directly relevant to this project" style="color:#c98500">★</span> ' : ''}<span class="rel rel-${l.relation}">${l.relation}</span> <a href="#/project/${l.project.id}">${esc(l.project.title)}</a>
           <span class="status s-${l.project.status}">${l.project.status}</span>${l.note ? `<div class="meta">${esc(l.note)}</div>` : ''}</li>`).join('')}</ul>`
           : '<p class="muted">Not linked to any project.</p>'}
         <form id="link" class="row wrap">
