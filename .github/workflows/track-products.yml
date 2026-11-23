@@ -33,6 +33,11 @@ jobs:
             2*|401|403) echo "Database is up." ;;
             *) echo "::warning::Supabase did not respond normally (HTTP $CODE). The project may be paused: open the Supabase dashboard and click Restore project." ;;
           esac
+          SITE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "https://wanglab-ci.github.io/paper_database/" || true)
+          echo "Portal website responded with HTTP $SITE"
+          [ "$SITE" = "200" ] || echo "::warning::The portal website did not load (HTTP $SITE). Check Settings → Pages."
+          AUTH=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "$SUPABASE_URL/auth/v1/health" -H "apikey: $KEY" || true)
+          echo "Supabase sign-in service responded with HTTP $AUTH"
       - name: Check literature, product pages and news feeds
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL || 'https://svdushruibzmvgcilxux.supabase.co' }}
