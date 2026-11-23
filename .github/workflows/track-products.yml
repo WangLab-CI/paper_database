@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: '17 5 * * *'      # daily, 05:17 UTC
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/track-products.yml', 'scripts/track-products.mjs']
 
 permissions:
   contents: read
@@ -17,6 +20,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Keep the Supabase project awake
+        # Free-tier projects pause after ~7 days without activity. One tiny request a day
+        # (public key; Row Level Security means it can read nothing) counts as activity.
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL || 'https://svdushruibzmvgcilxux.supabase.co' }}
+        run: |
+          KEY=$(grep -oE 'SUPABASE_ANON_KEY: "[^"]+"' site/js/config.js | cut -d'"' -f2)
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 60 "$SUPABASE_URL/rest/v1/profiles?select=id&limit=1" -H "apikey: $KEY" || true)
+          echo "Supabase responded with HTTP $CODE"
+          case "$CODE" in
+            2*|401|403) echo "Database is up." ;;
+            *) echo "::warning::Supabase did not respond normally (HTTP $CODE). The project may be paused: open the Supabase dashboard and click Restore project." ;;
+          esac
       - name: Check literature, product pages and news feeds
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL || 'https://svdushruibzmvgcilxux.supabase.co' }}
